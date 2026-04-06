@@ -226,3 +226,22 @@ Bias against:
 - ambient assumptions
 - giant abstractions
 - premature generalization
+
+## Session Completion
+
+When ending a work session in this repo:
+
+1. File or update beads for remaining work.
+2. Run the relevant quality gates for changed code.
+3. Update issue status so the next session starts from the real state.
+4. Sync and push completed work:
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status
+   ```
+5. Confirm the branch is up to date and the work is not stranded locally.
+
+Do not stop at a locally complete change if the repo workflow still expects the
+work to be synced and pushed.

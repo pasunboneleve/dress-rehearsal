@@ -66,6 +66,41 @@ Owns success criteria:
 - retry/timeout policy
 - failure artifact capture
 
+## Testing Model
+
+The architecture should support three distinct testing levels:
+
+### Unit tests
+
+Used for:
+- pure state transitions
+- path derivation
+- failure classification
+- cleanup ordering
+- verification assertions
+
+These tests should not require external processes or real infrastructure.
+
+### Mock-environment tests
+
+Used for:
+- executable-level behavior with abstracted external dependencies
+- backend and scenario interactions behind narrow interfaces
+- process and output handling without real cloud infrastructure
+
+These tests should exercise the harness as a system while replacing the
+external environment with controllable fakes or test doubles.
+
+### Real integration tests
+
+Used for:
+- one minimal but real deployment workflow
+- real verification against a deployed surface
+- real teardown and artifact preservation behavior
+
+These tests should target a minimal external environment and remain narrow
+enough to support iterative development rather than broad platform coverage.
+
 ## Non-Goals
 
 - no dynamic plugin system

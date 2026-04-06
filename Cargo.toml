@@ -1,0 +1,14 @@
+[package]
+name = "dress-rehearsal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[lib]
+name = "dress_rehearsal"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dress"
+path = "src/main.rs"

@@ -16,9 +16,14 @@ Current scope:
 - plan phased implementation work
 - keep the initial code skeleton narrow and structural
 
+First concrete target:
+- Terraform/OpenTofu backend
+- AWS ECS Express HTTP scenario
+
 Not implemented yet:
 - real deployment backends
 - real scenarios
 - full end-to-end execution
 
 See [docs/architecture.md](/home/dmvianna/src/projects/dress-rehearsal/docs/architecture.md) for the initial shape.
+See [docs/phases.md](/home/dmvianna/src/projects/dress-rehearsal/docs/phases.md) for the ordered implementation plan.

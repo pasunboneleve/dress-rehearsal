@@ -79,9 +79,50 @@ Owns success criteria:
 The first implementation path should move one real happy path through these
 boundaries:
 
+Initial concrete target:
+- backend: Terraform/OpenTofu
+- scenario: AWS ECS Express HTTP service rehearsal
+- verification: HTTP fixture response
+
+Execution path:
+
 1. CLI parses a command into a request.
 2. `RunContext` materializes an isolated run.
 3. `Scenario` prepares backend inputs and verification behavior.
 4. `DeploymentBackend` applies infrastructure.
 5. `VerificationSpec` verifies the deployed surface.
 6. `CleanupManager` tears the run down or preserves artifacts on failure.
+
+## Failure Semantics
+
+- Step failure propagates uniformly through `StepRunner`.
+- By default, failure should trigger registered cleanup in reverse order.
+- Artifact preservation should happen before the process exits on failure.
+- Explicit teardown remains available for operator-driven recovery.
+- The early implementation should prefer deterministic teardown over partial
+  rollback heuristics.
+
+## Operational Invariants
+
+### Credentials and secrets
+
+- Secret values must not be persisted in run metadata by default.
+- Backends and scenarios must receive credentials through explicit inputs,
+  not hidden ambient coupling.
+- Secret injection rules should be testable at the boundary where they enter a
+  backend or scenario.
+
+### Concurrency and isolation
+
+- `RunContext` must make local filesystem collisions impossible for concurrent
+  runs on the same machine.
+- Backend state isolation must be explicit per run.
+- Preserved artifacts must remain attributable to a single run id.
+
+### Observability
+
+- `StepRunner` should support human-readable CLI logs first.
+- Structured logs may be added later, but should not complicate the first happy
+  path.
+- CI usability matters: step names, live process output, and failure summaries
+  should remain clear in non-interactive environments.

@@ -266,7 +266,8 @@ impl HttpVerificationResponse {
     }
 
     pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.headers.insert(key.into(), value.into());
+        self.headers
+            .insert(normalize_header_name(&key.into()), value.into());
         self
     }
 
@@ -389,7 +390,7 @@ pub fn http_verification_plan(
 
     if let Some(body) = request.body() {
         script.push(' ');
-        script.push_str("--data ");
+        script.push_str("--data-raw ");
         script.push_str(&shell_quote(body));
     }
 
@@ -435,7 +436,10 @@ pub fn evaluate_http_response(
                 }
             }
             VerificationAssertion::HeaderEquals { header, expected } => {
-                let actual = response.headers().get(header).cloned();
+                let actual = response
+                    .headers()
+                    .get(&normalize_header_name(header))
+                    .cloned();
                 if actual.as_deref() != Some(expected.as_str()) {
                     failures.push(VerificationFailure::HeaderEquals {
                         header: header.clone(),
@@ -458,6 +462,10 @@ fn http_method_name(method: &HttpMethod) -> &'static str {
         HttpMethod::Get => "GET",
         HttpMethod::Post => "POST",
     }
+}
+
+fn normalize_header_name(header: &str) -> String {
+    header.to_ascii_lowercase()
 }
 
 fn shell_quote(value: &str) -> String {
@@ -604,8 +612,33 @@ mod tests {
                 .display_command()
                 .contains("curl --silent --show-error --location --request GET")
         );
+        assert!(
+            plan.request_step()
+                .display_command()
+                .contains("Accept: application/json")
+        );
         assert_eq!(plan.retry_policy().max_attempts(), 5);
         assert_eq!(plan.failure_artifacts().len(), 1);
+    }
+
+    #[test]
+    fn http_verification_plan_uses_data_raw_for_request_bodies() {
+        let spec = VerificationSpec::new(
+            "service ready",
+            VerificationTarget::HttpEndpoint {
+                url: "https://service.example.test/submit".to_string(),
+            },
+            Some(VerificationRequest::new(HttpMethod::Post).with_body("@literal-body")),
+        );
+
+        let plan = http_verification_plan(&spec).expect("http plan should be created");
+
+        assert!(plan.request_step().display_command().contains("--data-raw"));
+        assert!(
+            plan.request_step()
+                .display_command()
+                .contains("@literal-body")
+        );
     }
 
     #[test]
@@ -633,6 +666,27 @@ mod tests {
 
         assert!(report.passed());
         assert_eq!(report.failures(), &[]);
+    }
+
+    #[test]
+    fn evaluates_headers_case_insensitively() {
+        let spec = VerificationSpec::new(
+            "service ready",
+            VerificationTarget::HttpEndpoint {
+                url: "https://service.example.test/health".to_string(),
+            },
+            Some(VerificationRequest::new(HttpMethod::Get)),
+        )
+        .with_assertion(VerificationAssertion::HeaderEquals {
+            header: "Content-Type".to_string(),
+            expected: "application/json".to_string(),
+        });
+        let response =
+            HttpVerificationResponse::new(200).with_header("content-type", "application/json");
+
+        let report = evaluate_http_response(&spec, &response).expect("evaluation should succeed");
+
+        assert!(report.passed());
     }
 
     #[test]

@@ -265,9 +265,9 @@ impl HttpVerificationResponse {
         &self.body
     }
 
-    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn with_header(mut self, key: impl AsRef<str>, value: impl Into<String>) -> Self {
         self.headers
-            .insert(normalize_header_name(&key.into()), value.into());
+            .insert(normalize_header_name(key.as_ref()), value.into());
         self
     }
 
@@ -370,7 +370,7 @@ pub fn http_verification_plan(
 ) -> Result<HttpVerificationPlan, VerificationError> {
     let url = match verification_spec.target() {
         VerificationTarget::HttpEndpoint { url } => url,
-        VerificationTarget::NamedValue { .. } => return Err(VerificationError::MissingHttpTarget),
+        _ => return Err(VerificationError::MissingHttpTarget),
     };
     let request = verification_spec
         .request()

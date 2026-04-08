@@ -97,16 +97,8 @@ impl CleanupManager {
         let mut report = CleanupReport::default();
 
         for action in self.actions.iter().rev() {
-            match runner.run_command(action.command()) {
-                Ok(outcome) => report.results.push(CleanupResult::Succeeded {
-                    action_name: action.name().to_string(),
-                    outcome,
-                }),
-                Err(error) => report.results.push(CleanupResult::Failed {
-                    action_name: action.name().to_string(),
-                    error,
-                }),
-            }
+            let result = self.run_action(runner, action);
+            report.results.push(result);
         }
 
         report
@@ -120,10 +112,6 @@ impl CleanupManager {
         let mut report = CleanupReport::default();
 
         for action in self.actions.iter().rev() {
-            if let Some(hint) = action.recovery_hint_text() {
-                report.recovery_hints.push(hint.to_string());
-            }
-
             for artifact in action.preserved_artifacts() {
                 match run_context.preserve_file(artifact.source(), artifact.destination()) {
                     Ok(path) => report.preserved_artifacts.push(PreservedCleanupArtifact {
@@ -140,19 +128,32 @@ impl CleanupManager {
                 }
             }
 
-            match runner.run_command(action.command()) {
-                Ok(outcome) => report.results.push(CleanupResult::Succeeded {
-                    action_name: action.name().to_string(),
-                    outcome,
-                }),
-                Err(error) => report.results.push(CleanupResult::Failed {
-                    action_name: action.name().to_string(),
-                    error,
-                }),
+            let result = self.run_action(runner, action);
+            if result.is_failed() {
+                if let Some(hint) = action.recovery_hint_text() {
+                    report.recovery_hints.push(RecoveryHint {
+                        action_name: action.name().to_string(),
+                        hint: hint.to_string(),
+                    });
+                }
             }
+            report.results.push(result);
         }
 
         report
+    }
+
+    fn run_action(&self, runner: &StepRunner, action: &CleanupAction) -> CleanupResult {
+        match runner.run_command(action.command()) {
+            Ok(outcome) => CleanupResult::Succeeded {
+                action_name: action.name().to_string(),
+                outcome,
+            },
+            Err(error) => CleanupResult::Failed {
+                action_name: action.name().to_string(),
+                error,
+            },
+        }
     }
 }
 
@@ -161,7 +162,7 @@ pub struct CleanupReport {
     results: Vec<CleanupResult>,
     preserved_artifacts: Vec<PreservedCleanupArtifact>,
     preservation_errors: Vec<CleanupPreservationError>,
-    recovery_hints: Vec<String>,
+    recovery_hints: Vec<RecoveryHint>,
 }
 
 impl CleanupReport {
@@ -177,7 +178,7 @@ impl CleanupReport {
         &self.preservation_errors
     }
 
-    pub fn recovery_hints(&self) -> &[String] {
+    pub fn recovery_hints(&self) -> &[RecoveryHint] {
         &self.recovery_hints
     }
 
@@ -218,6 +219,12 @@ pub struct PreservedCleanupArtifact {
     pub preserved_path: PathBuf,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveryHint {
+    pub action_name: String,
+    pub hint: String,
+}
+
 #[derive(Debug)]
 pub struct CleanupPreservationError {
     pub action_name: String,
@@ -228,7 +235,7 @@ pub struct CleanupPreservationError {
 
 #[cfg(test)]
 mod tests {
-    use super::{CleanupAction, CleanupArtifact, CleanupManager, CleanupResult};
+    use super::{CleanupAction, CleanupArtifact, CleanupManager, CleanupResult, RecoveryHint};
     use crate::context::{RunContext, RunId};
     use crate::steps::{StepCommand, StepError, StepRunner};
     use std::env;
@@ -320,10 +327,7 @@ mod tests {
             fs::read_to_string(&report.preserved_artifacts()[0].preserved_path)?,
             "state"
         );
-        assert_eq!(
-            report.recovery_hints(),
-            &["Run `terraform destroy` manually if cleanup cannot complete."]
-        );
+        assert_eq!(report.recovery_hints(), &[] as &[RecoveryHint]);
         assert!(!report.has_failures());
 
         Ok(())
@@ -350,6 +354,35 @@ mod tests {
                 if action_name == "first"
         ));
         assert!(report.has_failures());
+    }
+
+    #[test]
+    fn failure_cleanup_emits_hints_only_for_failed_actions() {
+        let mut manager = CleanupManager::new();
+        let runner = StepRunner::new();
+        let run_context = RunContext::with_run_id(
+            "/tmp/dress-cleanup-runs",
+            RunId::new("run-cleanup-fixed-0002"),
+        );
+
+        manager.register(
+            CleanupAction::new("succeeds", shell_command("printf 'ok'"))
+                .recovery_hint("This hint should not be emitted."),
+        );
+        manager.register(
+            CleanupAction::new("fails", shell_command("exit 9"))
+                .recovery_hint("Manual teardown is required."),
+        );
+
+        let report = manager.execute_failure_cleanup(&runner, &run_context);
+
+        assert_eq!(
+            report.recovery_hints(),
+            &[RecoveryHint {
+                action_name: "fails".to_string(),
+                hint: "Manual teardown is required.".to_string(),
+            }]
+        );
     }
 
     fn shell_command(script: impl Into<String>) -> StepCommand {

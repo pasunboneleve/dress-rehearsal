@@ -92,10 +92,10 @@ impl StepCommand {
     }
 
     pub fn display_command(&self) -> String {
-        let mut rendered = self.program.display().to_string();
+        let mut rendered = render_shell_token(&self.program.display().to_string());
         for arg in &self.args {
             rendered.push(' ');
-            rendered.push_str(arg);
+            rendered.push_str(&render_shell_token(arg));
         }
         rendered
     }
@@ -305,9 +305,9 @@ impl fmt::Display for StepError {
             ),
             Self::Failed(outcome) => write!(
                 f,
-                "step `{}` exited unsuccessfully with code {:?}",
+                "step `{}` exited unsuccessfully with status {}",
                 outcome.step_name(),
-                outcome.exit_code()
+                outcome.exit_status()
             ),
         }
     }
@@ -326,6 +326,22 @@ struct NoopStepEventSink;
 
 impl StepEventSink for NoopStepEventSink {
     fn on_event(&mut self, _event: StepEvent) {}
+}
+
+fn render_shell_token(token: &str) -> String {
+    if token.is_empty() {
+        return "''".to_string();
+    }
+
+    if token
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "/._-".contains(character))
+    {
+        return token.to_string();
+    }
+
+    let escaped = token.replace('\'', r#"'\''"#);
+    format!("'{escaped}'")
 }
 
 #[cfg(test)]
@@ -412,7 +428,7 @@ mod tests {
             sink.events[0],
             StepEvent::Started {
                 step_name: "shell-step".into(),
-                command: format!("{} -c exit 0", shell_program()),
+                command: format!("{} -c 'exit 0'", shell_program()),
             }
         );
         assert_eq!(

@@ -7,7 +7,7 @@ use crate::steps::StepRunner;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Scenario-local input materialized before backend initialization.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -276,6 +276,18 @@ pub fn require_output<'a>(
 }
 
 pub fn scenario_file(run_context: &RunContext, relative_path: impl AsRef<Path>) -> PathBuf {
+    let relative_path = relative_path.as_ref();
+    assert!(
+        relative_path.is_relative(),
+        "scenario paths must remain relative to the scenario workspace"
+    );
+    assert!(
+        !relative_path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir)),
+        "scenario paths must not traverse outside the scenario workspace"
+    );
+
     run_context.work_dir().join("scenarios").join(relative_path)
 }
 
@@ -406,5 +418,21 @@ mod tests {
             path,
             PathBuf::from("/tmp/dress-runs/run-fixed-3004/work/scenarios/ecs/service.json")
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "scenario paths must remain relative to the scenario workspace")]
+    fn scenario_file_rejects_absolute_paths() {
+        let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-3005"));
+
+        let _ = scenario_file(&run_context, "/tmp/escape");
+    }
+
+    #[test]
+    #[should_panic(expected = "scenario paths must not traverse outside the scenario workspace")]
+    fn scenario_file_rejects_parent_traversal() {
+        let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-3006"));
+
+        let _ = scenario_file(&run_context, "../escape");
     }
 }

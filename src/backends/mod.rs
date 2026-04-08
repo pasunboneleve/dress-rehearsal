@@ -1,5 +1,7 @@
 //! DeploymentBackend abstractions and implementations belong here.
 
+pub mod terraform;
+
 use crate::context::RunContext;
 use crate::steps::{StepError, StepRunner};
 use std::collections::BTreeMap;

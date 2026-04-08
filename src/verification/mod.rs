@@ -2,7 +2,6 @@
 
 use crate::scenarios::{ScenarioTarget, ScenarioVerification};
 use std::collections::BTreeMap;
-use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -10,7 +9,7 @@ use std::time::Duration;
 pub struct VerificationSpec {
     readiness_label: String,
     target: VerificationTarget,
-    request: VerificationRequest,
+    request: Option<VerificationRequest>,
     assertions: Vec<VerificationAssertion>,
     retry_policy: RetryPolicy,
     failure_artifacts: Vec<FailureArtifactCapture>,
@@ -21,7 +20,7 @@ impl VerificationSpec {
     pub fn new(
         readiness_label: impl Into<String>,
         target: VerificationTarget,
-        request: VerificationRequest,
+        request: Option<VerificationRequest>,
     ) -> Self {
         Self {
             readiness_label: readiness_label.into(),
@@ -42,8 +41,8 @@ impl VerificationSpec {
         &self.target
     }
 
-    pub fn request(&self) -> &VerificationRequest {
-        &self.request
+    pub fn request(&self) -> Option<&VerificationRequest> {
+        self.request.as_ref()
     }
 
     pub fn assertions(&self) -> &[VerificationAssertion] {
@@ -64,6 +63,11 @@ impl VerificationSpec {
 
     pub fn with_assertion(mut self, assertion: VerificationAssertion) -> Self {
         self.assertions.push(assertion);
+        self
+    }
+
+    pub fn with_request(mut self, request: VerificationRequest) -> Self {
+        self.request = Some(request);
         self
     }
 
@@ -210,26 +214,9 @@ pub enum FailureArtifactSource {
     StepLog { step_name: String },
 }
 
-#[derive(Debug)]
-pub enum VerificationError {
-    InvalidScenarioTarget { message: String },
-}
-
-impl fmt::Display for VerificationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidScenarioTarget { message } => {
-                write!(f, "invalid verification target: {message}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for VerificationError {}
-
 pub fn verification_spec_from_scenario(
     scenario_verification: &ScenarioVerification,
-) -> Result<VerificationSpec, VerificationError> {
+) -> VerificationSpec {
     let target = match scenario_verification.target() {
         ScenarioTarget::HttpEndpoint { url } => {
             VerificationTarget::HttpEndpoint { url: url.clone() }
@@ -240,11 +227,7 @@ pub fn verification_spec_from_scenario(
         },
     };
 
-    let mut spec = VerificationSpec::new(
-        scenario_verification.readiness_label(),
-        target,
-        VerificationRequest::new(HttpMethod::Get),
-    );
+    let mut spec = VerificationSpec::new(scenario_verification.readiness_label(), target, None);
 
     for (key, value) in scenario_verification.metadata() {
         spec = spec.with_metadata(key.clone(), value.clone());
@@ -255,6 +238,7 @@ pub fn verification_spec_from_scenario(
         ScenarioTarget::HttpEndpoint { .. }
     ) {
         spec = spec
+            .with_request(VerificationRequest::new(HttpMethod::Get))
             .with_assertion(VerificationAssertion::StatusCode { expected: 200 })
             .with_failure_artifact(FailureArtifactCapture::new(
                 FailureArtifactSource::HttpResponseBody,
@@ -262,7 +246,7 @@ pub fn verification_spec_from_scenario(
             ));
     }
 
-    Ok(spec)
+    spec
 }
 
 #[cfg(test)]
@@ -283,7 +267,9 @@ mod tests {
             VerificationTarget::HttpEndpoint {
                 url: "https://service.example.test/health".to_string(),
             },
-            VerificationRequest::new(HttpMethod::Get).with_header("Accept", "application/json"),
+            Some(
+                VerificationRequest::new(HttpMethod::Get).with_header("Accept", "application/json"),
+            ),
         )
         .with_assertion(VerificationAssertion::StatusCode { expected: 200 })
         .with_assertion(VerificationAssertion::BodyContains {
@@ -326,8 +312,7 @@ mod tests {
         )
         .with_metadata("region", "us-east-1");
 
-        let spec = verification_spec_from_scenario(&scenario_verification)
-            .expect("http scenario verification should translate");
+        let spec = verification_spec_from_scenario(&scenario_verification);
 
         assert_eq!(
             spec.target(),
@@ -335,7 +320,10 @@ mod tests {
                 url: "https://service.example.test/health".to_string()
             }
         );
-        assert_eq!(spec.request().method(), &HttpMethod::Get);
+        assert_eq!(
+            spec.request().map(VerificationRequest::method),
+            Some(&HttpMethod::Get)
+        );
         assert_eq!(
             spec.assertions(),
             &[VerificationAssertion::StatusCode { expected: 200 }]
@@ -357,8 +345,7 @@ mod tests {
             },
         );
 
-        let spec = verification_spec_from_scenario(&scenario_verification)
-            .expect("named output verification should translate");
+        let spec = verification_spec_from_scenario(&scenario_verification);
 
         assert_eq!(
             spec.target(),
@@ -369,5 +356,6 @@ mod tests {
         );
         assert_eq!(spec.assertions().len(), 0);
         assert_eq!(spec.failure_artifacts().len(), 0);
+        assert_eq!(spec.request(), None);
     }
 }

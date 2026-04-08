@@ -275,20 +275,28 @@ pub fn require_output<'a>(
         .ok_or_else(|| ScenarioError::missing_output(scenario_name, key))
 }
 
-pub fn scenario_file(run_context: &RunContext, relative_path: impl AsRef<Path>) -> PathBuf {
+pub fn scenario_file(
+    run_context: &RunContext,
+    relative_path: impl AsRef<Path>,
+) -> Result<PathBuf, ScenarioError> {
     let relative_path = relative_path.as_ref();
-    assert!(
-        relative_path.is_relative(),
-        "scenario paths must remain relative to the scenario workspace"
-    );
-    assert!(
-        !relative_path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir)),
-        "scenario paths must not traverse outside the scenario workspace"
-    );
+    if !relative_path.is_relative() {
+        return Err(ScenarioError::invalid_configuration(
+            "scenario workspace",
+            "scenario paths must remain relative to the scenario workspace",
+        ));
+    }
+    if relative_path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(ScenarioError::invalid_configuration(
+            "scenario workspace",
+            "scenario paths must not traverse outside the scenario workspace",
+        ));
+    }
 
-    run_context.work_dir().join("scenarios").join(relative_path)
+    Ok(run_context.work_dir().join("scenarios").join(relative_path))
 }
 
 #[cfg(test)]
@@ -412,7 +420,7 @@ mod tests {
     fn scenario_files_live_under_run_work_directory() {
         let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-3004"));
 
-        let path = scenario_file(&run_context, "ecs/service.json");
+        let path = scenario_file(&run_context, "ecs/service.json").expect("path should resolve");
 
         assert_eq!(
             path,
@@ -421,18 +429,30 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "scenario paths must remain relative to the scenario workspace")]
     fn scenario_file_rejects_absolute_paths() {
         let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-3005"));
+        let error = scenario_file(&run_context, "/tmp/escape")
+            .expect_err("absolute path should be rejected");
 
-        let _ = scenario_file(&run_context, "/tmp/escape");
+        assert!(
+            error
+                .to_string()
+                .contains("scenario paths must remain relative"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
-    #[should_panic(expected = "scenario paths must not traverse outside the scenario workspace")]
     fn scenario_file_rejects_parent_traversal() {
         let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-3006"));
+        let error = scenario_file(&run_context, "../escape")
+            .expect_err("parent traversal should be rejected");
 
-        let _ = scenario_file(&run_context, "../escape");
+        assert!(
+            error
+                .to_string()
+                .contains("scenario paths must not traverse outside"),
+            "unexpected error: {error}"
+        );
     }
 }

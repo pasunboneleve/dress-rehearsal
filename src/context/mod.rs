@@ -3,7 +3,7 @@
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -174,6 +174,12 @@ fn join_relative_path(base: &Path, relative_path: impl AsRef<Path>) -> PathBuf {
         !relative_path.is_absolute(),
         "run context paths must remain relative to the run directory"
     );
+    assert!(
+        !relative_path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir)),
+        "run context paths must not traverse outside the run directory"
+    );
 
     base.join(relative_path)
 }
@@ -299,5 +305,21 @@ mod tests {
         let context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-0005"));
 
         let _ = context.preserved_artifact_path("/tmp/escaped");
+    }
+
+    #[test]
+    #[should_panic(expected = "run context paths must not traverse outside the run directory")]
+    fn artifact_path_rejects_parent_traversal() {
+        let context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-0006"));
+
+        let _ = context.artifact_path("../escaped");
+    }
+
+    #[test]
+    #[should_panic(expected = "run context paths must not traverse outside the run directory")]
+    fn preserved_artifact_path_rejects_parent_traversal() {
+        let context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-0007"));
+
+        let _ = context.preserved_artifact_path("../escaped");
     }
 }

@@ -154,6 +154,39 @@ impl AwsEcsExpressScenario {
             ),
         ]
     }
+
+    fn terraform_destroy_cleanup(&self) -> CleanupAction {
+        let working_directory = self
+            .config
+            .working_directory()
+            .unwrap_or(self.config.deployment_root());
+
+        CleanupAction::new(
+            "aws-ecs-terraform-destroy",
+            StepCommand::new("terraform-destroy-step", "/bin/sh")
+                .with_args(["-c".to_string(), "terraform destroy -auto-approve".to_string()])
+                .with_current_dir(working_directory),
+        )
+        .recovery_hint(
+            "If cleanup fails, inspect the ECS service and Terraform state before retrying destroy.",
+        )
+    }
+
+    fn ecs_service_drain_cleanup(&self, cluster_name: &str, service_name: &str) -> CleanupAction {
+        CleanupAction::new(
+            "aws-ecs-service-drain",
+            StepCommand::new("aws-ecs-service-drain-step", "/bin/sh").with_args([
+                "-c".to_string(),
+                format!(
+                    "aws ecs update-service --region {} --cluster {} --service {} --desired-count 0",
+                    shell_quote_literal(self.config.region()),
+                    shell_quote_literal(cluster_name),
+                    shell_quote_literal(service_name),
+                ),
+            ]),
+        )
+        .recovery_hint("If the ECS service remains active, scale it to zero and inspect target group health.")
+    }
 }
 
 impl Scenario for AwsEcsExpressScenario {
@@ -181,16 +214,9 @@ impl Scenario for AwsEcsExpressScenario {
         let task_definition = scenario_file(run_context, self.config.task_definition_path())?;
 
         let mut preparation = ScenarioPreparation::new(self.backend_request())
-            .with_cleanup_action(
-                CleanupAction::new("aws-ecs-terraform-destroy", StepCommand::new("/bin/true", "/bin/true"))
-                    .preserve_on_failure(CleanupArtifact::new(
-                        &task_definition,
-                        "aws-ecs/task-definition.json",
-                    ))
-                    .recovery_hint(
-                        "If cleanup fails, inspect the ECS service and Terraform state before retrying destroy.",
-                    ),
-            )
+            .with_cleanup_action(self.terraform_destroy_cleanup().preserve_on_failure(
+                CleanupArtifact::new(&task_definition, "aws-ecs/task-definition.json"),
+            ))
             .with_metadata("prerequisite_step", prerequisite_command.display_command())
             .with_metadata("bootstrap_step", bootstrap_command.display_command());
 
@@ -226,20 +252,14 @@ impl Scenario for AwsEcsExpressScenario {
             ScenarioVerification::new(
                 "ecs service reachable",
                 ScenarioTarget::HttpEndpoint {
-                    url: format!("{}{}", service_url, self.config.expected_health_path()),
+                    url: join_url_path(service_url, self.config.expected_health_path()),
                 },
             )
             .with_metadata("cluster_name", cluster_name)
             .with_metadata("service_name", service_name)
             .with_metadata("region", self.config.region()),
         )
-        .with_cleanup_action(
-            CleanupAction::new(
-                "aws-ecs-service-drain",
-                StepCommand::new("cleanup-step", "/bin/true"),
-            )
-            .recovery_hint("If the ECS service remains active, scale it to zero and inspect target group health."),
-        )
+        .with_cleanup_action(self.ecs_service_drain_cleanup(cluster_name, service_name))
         .with_surfaced_value("cluster_name", cluster_name)
         .with_surfaced_value("service_name", service_name)
         .with_surfaced_value("service_url", service_url)
@@ -250,6 +270,20 @@ impl Scenario for AwsEcsExpressScenario {
 fn shell_quote(path: &Path) -> String {
     let rendered = path.display().to_string();
     format!("'{}'", rendered.replace('\'', r#"'\''"#))
+}
+
+fn shell_quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
+}
+
+fn join_url_path(base_url: &str, path: &str) -> String {
+    let base_url = base_url.trim_end_matches('/');
+    let path = path.trim_start_matches('/');
+    if path.is_empty() {
+        base_url.to_string()
+    } else {
+        format!("{base_url}/{path}")
+    }
 }
 
 #[cfg(test)]
@@ -329,6 +363,10 @@ mod tests {
         );
         assert_eq!(preparation.cleanup_actions().len(), 1);
         assert_eq!(
+            preparation.cleanup_actions()[0].name(),
+            "aws-ecs-terraform-destroy"
+        );
+        assert_eq!(
             preparation.metadata().get("health_path"),
             Some(&"/health".to_string())
         );
@@ -360,6 +398,10 @@ mod tests {
             .expect("discovery should succeed");
 
         assert_eq!(discovery.cleanup_actions().len(), 1);
+        assert_eq!(
+            discovery.cleanup_actions()[0].name(),
+            "aws-ecs-service-drain"
+        );
         assert_eq!(
             discovery.verification().target(),
             &ScenarioTarget::HttpEndpoint {
@@ -407,5 +449,34 @@ mod tests {
             .expect_err("missing outputs should fail");
 
         assert!(error.to_string().contains("cluster_name"));
+    }
+
+    #[test]
+    fn discover_normalizes_health_url_joining() {
+        let scenario = AwsEcsExpressScenario::new(AwsEcsExpressScenarioConfig::new(
+            "/tmp/scenario",
+            "us-east-1",
+            "health",
+        ));
+        let run_context =
+            RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-ecs-0005"));
+        let request = BackendRequest::new("/tmp/scenario");
+        let session = BackendSession::new(&run_context, "terraform", &request);
+        let mut outputs = BackendOutputs::new();
+        outputs.insert("cluster_name", "dress-cluster");
+        outputs.insert("service_name", "dress-service");
+        outputs.insert("service_url", "https://service.example.test/");
+        let deployment = ScenarioDeployment::new("terraform", session, outputs);
+
+        let discovery = scenario
+            .discover(&deployment, &StepRunner::new())
+            .expect("discovery should succeed");
+
+        assert_eq!(
+            discovery.verification().target(),
+            &ScenarioTarget::HttpEndpoint {
+                url: "https://service.example.test/health".to_string()
+            }
+        );
     }
 }

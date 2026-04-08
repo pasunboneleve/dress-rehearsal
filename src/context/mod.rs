@@ -100,11 +100,11 @@ impl RunContext {
     }
 
     pub fn artifact_path(&self, relative_path: impl AsRef<Path>) -> PathBuf {
-        self.artifacts_dir.join(relative_path)
+        join_relative_path(&self.artifacts_dir, relative_path)
     }
 
     pub fn preserved_artifact_path(&self, relative_path: impl AsRef<Path>) -> PathBuf {
-        self.preserved_dir.join(relative_path)
+        join_relative_path(&self.preserved_dir, relative_path)
     }
 
     /// Creates the run directory layout so downstream orchestration receives
@@ -166,6 +166,16 @@ impl RunMetadata {
             self.run_id, self.root_dir, self.work_dir, self.artifacts_dir, self.preserved_dir
         )
     }
+}
+
+fn join_relative_path(base: &Path, relative_path: impl AsRef<Path>) -> PathBuf {
+    let relative_path = relative_path.as_ref();
+    assert!(
+        !relative_path.is_absolute(),
+        "run context paths must remain relative to the run directory"
+    );
+
+    base.join(relative_path)
 }
 
 #[cfg(test)]
@@ -273,5 +283,21 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.as_str().starts_with("run-"));
         assert!(second.as_str().starts_with("run-"));
+    }
+
+    #[test]
+    #[should_panic(expected = "run context paths must remain relative to the run directory")]
+    fn artifact_path_rejects_absolute_paths() {
+        let context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-0004"));
+
+        let _ = context.artifact_path("/tmp/escaped");
+    }
+
+    #[test]
+    #[should_panic(expected = "run context paths must remain relative to the run directory")]
+    fn preserved_artifact_path_rejects_absolute_paths() {
+        let context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-0005"));
+
+        let _ = context.preserved_artifact_path("/tmp/escaped");
     }
 }

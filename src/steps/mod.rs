@@ -305,7 +305,7 @@ impl fmt::Display for StepError {
             ),
             Self::Failed(outcome) => write!(
                 f,
-                "step `{}` exited unsuccessfully with status {}",
+                "step `{}` exited unsuccessfully: {}",
                 outcome.step_name(),
                 outcome.exit_status()
             ),

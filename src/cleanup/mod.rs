@@ -97,7 +97,7 @@ impl CleanupManager {
         let mut report = CleanupReport::default();
 
         for action in self.actions.iter().rev() {
-            let result = self.run_action(runner, action);
+            let result = Self::run_action(runner, action);
             report.results.push(result);
         }
 
@@ -128,7 +128,7 @@ impl CleanupManager {
                 }
             }
 
-            let result = self.run_action(runner, action);
+            let result = Self::run_action(runner, action);
             if result.is_failed() {
                 if let Some(hint) = action.recovery_hint_text() {
                     report.recovery_hints.push(RecoveryHint {
@@ -143,7 +143,7 @@ impl CleanupManager {
         report
     }
 
-    fn run_action(&self, runner: &StepRunner, action: &CleanupAction) -> CleanupResult {
+    fn run_action(runner: &StepRunner, action: &CleanupAction) -> CleanupResult {
         match runner.run_command(action.command()) {
             Ok(outcome) => CleanupResult::Succeeded {
                 action_name: action.name().to_string(),

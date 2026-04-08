@@ -1,5 +1,7 @@
 //! Scenario abstractions and concrete rehearsal scenarios belong here.
 
+pub mod aws_ecs_express;
+
 use crate::backends::{BackendOutputs, BackendRequest, BackendSession};
 use crate::cleanup::CleanupAction;
 use crate::context::RunContext;

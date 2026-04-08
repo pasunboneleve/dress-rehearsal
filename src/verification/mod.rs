@@ -1,7 +1,9 @@
 //! VerificationSpec and verification execution belong here.
 
 use crate::scenarios::{ScenarioTarget, ScenarioVerification};
+use crate::steps::StepCommand;
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -214,6 +216,119 @@ pub enum FailureArtifactSource {
     StepLog { step_name: String },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVerificationPlan {
+    request_step: StepCommand,
+    retry_policy: RetryPolicy,
+    failure_artifacts: Vec<FailureArtifactCapture>,
+}
+
+impl HttpVerificationPlan {
+    pub fn request_step(&self) -> &StepCommand {
+        &self.request_step
+    }
+
+    pub fn retry_policy(&self) -> &RetryPolicy {
+        &self.retry_policy
+    }
+
+    pub fn failure_artifacts(&self) -> &[FailureArtifactCapture] {
+        &self.failure_artifacts
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpVerificationResponse {
+    status_code: u16,
+    headers: BTreeMap<String, String>,
+    body: String,
+}
+
+impl HttpVerificationResponse {
+    pub fn new(status_code: u16) -> Self {
+        Self {
+            status_code,
+            headers: BTreeMap::new(),
+            body: String::new(),
+        }
+    }
+
+    pub fn status_code(&self) -> u16 {
+        self.status_code
+    }
+
+    pub fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn with_body(mut self, body: impl Into<String>) -> Self {
+        self.body = body.into();
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerificationReport {
+    passed: bool,
+    failures: Vec<VerificationFailure>,
+}
+
+impl VerificationReport {
+    pub fn passed(&self) -> bool {
+        self.passed
+    }
+
+    pub fn failures(&self) -> &[VerificationFailure] {
+        &self.failures
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VerificationFailure {
+    StatusCode {
+        expected: u16,
+        actual: u16,
+    },
+    BodyContains {
+        expected_substring: String,
+    },
+    HeaderEquals {
+        header: String,
+        expected: String,
+        actual: Option<String>,
+    },
+}
+
+#[derive(Debug)]
+pub enum VerificationError {
+    MissingHttpTarget,
+    MissingHttpRequest,
+}
+
+impl fmt::Display for VerificationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingHttpTarget => {
+                f.write_str("verification spec does not target an HTTP endpoint")
+            }
+            Self::MissingHttpRequest => {
+                f.write_str("verification spec does not define an HTTP request")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VerificationError {}
+
 pub fn verification_spec_from_scenario(
     scenario_verification: &ScenarioVerification,
 ) -> VerificationSpec {
@@ -249,11 +364,112 @@ pub fn verification_spec_from_scenario(
     spec
 }
 
+pub fn http_verification_plan(
+    verification_spec: &VerificationSpec,
+) -> Result<HttpVerificationPlan, VerificationError> {
+    let url = match verification_spec.target() {
+        VerificationTarget::HttpEndpoint { url } => url,
+        VerificationTarget::NamedValue { .. } => return Err(VerificationError::MissingHttpTarget),
+    };
+    let request = verification_spec
+        .request()
+        .ok_or(VerificationError::MissingHttpRequest)?;
+
+    let mut command = StepCommand::new("http-verify-request", "/bin/sh");
+    let mut script = format!(
+        "curl --silent --show-error --location --request {}",
+        http_method_name(request.method())
+    );
+
+    for (key, value) in request.headers() {
+        script.push(' ');
+        script.push_str("--header ");
+        script.push_str(&shell_quote(&format!("{key}: {value}")));
+    }
+
+    if let Some(body) = request.body() {
+        script.push(' ');
+        script.push_str("--data ");
+        script.push_str(&shell_quote(body));
+    }
+
+    script.push(' ');
+    script.push_str(&shell_quote(url));
+
+    command = command.with_args(["-c".to_string(), script]);
+
+    Ok(HttpVerificationPlan {
+        request_step: command,
+        retry_policy: verification_spec.retry_policy().clone(),
+        failure_artifacts: verification_spec.failure_artifacts().to_vec(),
+    })
+}
+
+pub fn evaluate_http_response(
+    verification_spec: &VerificationSpec,
+    response: &HttpVerificationResponse,
+) -> Result<VerificationReport, VerificationError> {
+    if !matches!(
+        verification_spec.target(),
+        VerificationTarget::HttpEndpoint { .. }
+    ) {
+        return Err(VerificationError::MissingHttpTarget);
+    }
+
+    let mut failures = Vec::new();
+    for assertion in verification_spec.assertions() {
+        match assertion {
+            VerificationAssertion::StatusCode { expected } => {
+                if response.status_code() != *expected {
+                    failures.push(VerificationFailure::StatusCode {
+                        expected: *expected,
+                        actual: response.status_code(),
+                    });
+                }
+            }
+            VerificationAssertion::BodyContains { expected_substring } => {
+                if !response.body().contains(expected_substring) {
+                    failures.push(VerificationFailure::BodyContains {
+                        expected_substring: expected_substring.clone(),
+                    });
+                }
+            }
+            VerificationAssertion::HeaderEquals { header, expected } => {
+                let actual = response.headers().get(header).cloned();
+                if actual.as_deref() != Some(expected.as_str()) {
+                    failures.push(VerificationFailure::HeaderEquals {
+                        header: header.clone(),
+                        expected: expected.clone(),
+                        actual,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(VerificationReport {
+        passed: failures.is_empty(),
+        failures,
+    })
+}
+
+fn http_method_name(method: &HttpMethod) -> &'static str {
+    match method {
+        HttpMethod::Get => "GET",
+        HttpMethod::Post => "POST",
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        FailureArtifactCapture, FailureArtifactSource, HttpMethod, RetryPolicy,
-        VerificationAssertion, VerificationRequest, VerificationSpec, VerificationTarget,
+        FailureArtifactCapture, FailureArtifactSource, HttpMethod, HttpVerificationResponse,
+        RetryPolicy, VerificationAssertion, VerificationFailure, VerificationRequest,
+        VerificationSpec, VerificationTarget, evaluate_http_response, http_verification_plan,
         verification_spec_from_scenario,
     };
     use crate::scenarios::{ScenarioTarget, ScenarioVerification};
@@ -357,5 +573,108 @@ mod tests {
         assert_eq!(spec.assertions().len(), 0);
         assert_eq!(spec.failure_artifacts().len(), 0);
         assert_eq!(spec.request(), None);
+    }
+
+    #[test]
+    fn builds_http_verification_plan_from_http_spec() {
+        let spec = VerificationSpec::new(
+            "service ready",
+            VerificationTarget::HttpEndpoint {
+                url: "https://service.example.test/health".to_string(),
+            },
+            Some(
+                VerificationRequest::new(HttpMethod::Get).with_header("Accept", "application/json"),
+            ),
+        )
+        .with_retry_policy(RetryPolicy::new(
+            5,
+            Duration::from_secs(3),
+            Duration::from_secs(20),
+        ))
+        .with_failure_artifact(FailureArtifactCapture::new(
+            FailureArtifactSource::HttpResponseBody,
+            "verification/http-response.txt",
+        ));
+
+        let plan = http_verification_plan(&spec).expect("http plan should be created");
+
+        assert_eq!(plan.request_step().name().as_str(), "http-verify-request");
+        assert!(
+            plan.request_step()
+                .display_command()
+                .contains("curl --silent --show-error --location --request GET")
+        );
+        assert_eq!(plan.retry_policy().max_attempts(), 5);
+        assert_eq!(plan.failure_artifacts().len(), 1);
+    }
+
+    #[test]
+    fn evaluates_http_assertions_against_response() {
+        let spec = VerificationSpec::new(
+            "service ready",
+            VerificationTarget::HttpEndpoint {
+                url: "https://service.example.test/health".to_string(),
+            },
+            Some(VerificationRequest::new(HttpMethod::Get)),
+        )
+        .with_assertion(VerificationAssertion::StatusCode { expected: 200 })
+        .with_assertion(VerificationAssertion::BodyContains {
+            expected_substring: "ok".to_string(),
+        })
+        .with_assertion(VerificationAssertion::HeaderEquals {
+            header: "content-type".to_string(),
+            expected: "application/json".to_string(),
+        });
+        let response = HttpVerificationResponse::new(200)
+            .with_header("content-type", "application/json")
+            .with_body("{\"status\":\"ok\"}");
+
+        let report = evaluate_http_response(&spec, &response).expect("evaluation should succeed");
+
+        assert!(report.passed());
+        assert_eq!(report.failures(), &[]);
+    }
+
+    #[test]
+    fn reports_http_assertion_failures_explicitly() {
+        let spec = VerificationSpec::new(
+            "service ready",
+            VerificationTarget::HttpEndpoint {
+                url: "https://service.example.test/health".to_string(),
+            },
+            Some(VerificationRequest::new(HttpMethod::Get)),
+        )
+        .with_assertion(VerificationAssertion::StatusCode { expected: 200 })
+        .with_assertion(VerificationAssertion::BodyContains {
+            expected_substring: "ok".to_string(),
+        })
+        .with_assertion(VerificationAssertion::HeaderEquals {
+            header: "content-type".to_string(),
+            expected: "application/json".to_string(),
+        });
+        let response = HttpVerificationResponse::new(503)
+            .with_header("content-type", "text/plain")
+            .with_body("not ready");
+
+        let report = evaluate_http_response(&spec, &response).expect("evaluation should succeed");
+
+        assert!(!report.passed());
+        assert_eq!(
+            report.failures(),
+            &[
+                VerificationFailure::StatusCode {
+                    expected: 200,
+                    actual: 503,
+                },
+                VerificationFailure::BodyContains {
+                    expected_substring: "ok".to_string(),
+                },
+                VerificationFailure::HeaderEquals {
+                    header: "content-type".to_string(),
+                    expected: "application/json".to_string(),
+                    actual: Some("text/plain".to_string()),
+                },
+            ]
+        );
     }
 }

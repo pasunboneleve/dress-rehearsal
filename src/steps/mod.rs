@@ -5,6 +5,7 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
+use std::sync::{Arc, Mutex};
 
 /// Stable name for one orchestration step.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
@@ -154,15 +155,27 @@ pub trait StepEventSink {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct StepRunner;
+pub struct StepRunner {
+    recorded_events: Arc<Mutex<Vec<StepEvent>>>,
+}
 
 impl StepRunner {
     pub fn new() -> Self {
-        Self
+        Self {
+            recorded_events: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn recorded_events(&self) -> Vec<StepEvent> {
+        self.recorded_events
+            .lock()
+            .expect("step event recording mutex should not be poisoned")
+            .clone()
     }
 
     pub fn run_command(&self, command: &StepCommand) -> Result<StepOutcome, StepError> {
-        self.run_command_with_sink(command, &mut NoopStepEventSink)
+        let mut sink = RecordingStepEventSink::new(self.recorded_events.clone());
+        self.run_command_with_sink(command, &mut sink)
     }
 
     pub fn run_command_with_sink(
@@ -322,10 +335,23 @@ impl std::error::Error for StepError {
     }
 }
 
-struct NoopStepEventSink;
+struct RecordingStepEventSink {
+    recorded_events: Arc<Mutex<Vec<StepEvent>>>,
+}
 
-impl StepEventSink for NoopStepEventSink {
-    fn on_event(&mut self, _event: StepEvent) {}
+impl RecordingStepEventSink {
+    fn new(recorded_events: Arc<Mutex<Vec<StepEvent>>>) -> Self {
+        Self { recorded_events }
+    }
+}
+
+impl StepEventSink for RecordingStepEventSink {
+    fn on_event(&mut self, event: StepEvent) {
+        self.recorded_events
+            .lock()
+            .expect("step event recording mutex should not be poisoned")
+            .push(event);
+    }
 }
 
 fn render_shell_token(token: &str) -> String {
@@ -455,6 +481,7 @@ mod tests {
                 .stdout_text()
                 .contains(&env::temp_dir().display().to_string())
         );
+        assert_eq!(runner.recorded_events().len(), 2);
     }
 
     fn shell_command(script: &str) -> StepCommand {

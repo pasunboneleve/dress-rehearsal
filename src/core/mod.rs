@@ -4,14 +4,15 @@ use crate::backends::{BackendError, DeploymentBackend};
 use crate::cleanup::{CleanupManager, CleanupReport};
 use crate::context::RunContext;
 use crate::scenarios::{Scenario, ScenarioDeployment, ScenarioError};
-use crate::steps::{StepError, StepRunner};
+use crate::steps::{StepError, StepEvent, StepRunner, StepTerminalStatus};
 use crate::verification::{
     VerificationReport, VerificationRunError, execute_verification, verification_spec_from_scenario,
 };
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn rehearse(
     runs_root: impl AsRef<Path>,
@@ -21,7 +22,7 @@ pub fn rehearse(
 ) -> RehearsalOutcome {
     let run_context = RunContext::new(runs_root.as_ref());
     if let Err(source) = run_context.materialize() {
-        return RehearsalOutcome::Failed(RehearsalFailure {
+        let mut failure = RehearsalFailure {
             run_context,
             stage: RehearsalStage::Materialize,
             error: RehearsalError::Io {
@@ -29,7 +30,11 @@ pub fn rehearse(
                 source,
             },
             cleanup_report: None,
-        });
+            summary_path: None,
+            step_log_path: None,
+        };
+        write_observability_artifacts(&mut failure, runner);
+        return RehearsalOutcome::Failed(failure);
     }
 
     let mut cleanup_manager = CleanupManager::new();
@@ -134,20 +139,28 @@ pub fn rehearse(
 
     let cleanup_report = cleanup_manager.execute_teardown(runner);
     if cleanup_report.has_failures() {
-        return RehearsalOutcome::Failed(RehearsalFailure {
+        let mut failure = RehearsalFailure {
             run_context,
             stage: RehearsalStage::Teardown,
             error: RehearsalError::CleanupFailed,
             cleanup_report: Some(cleanup_report),
-        });
+            summary_path: None,
+            step_log_path: None,
+        };
+        write_observability_artifacts(&mut failure, runner);
+        return RehearsalOutcome::Failed(failure);
     }
 
-    RehearsalOutcome::Succeeded(RehearsalSuccess {
+    let mut success = RehearsalSuccess {
         run_context,
         verification_report,
         cleanup_report,
         surfaced_values: discovery.surfaced_values().clone(),
-    })
+        summary_path: None,
+        step_log_path: None,
+    };
+    write_observability_artifacts(&mut success, runner);
+    RehearsalOutcome::Succeeded(success)
 }
 
 fn failed_outcome(
@@ -158,12 +171,16 @@ fn failed_outcome(
     runner: &StepRunner,
 ) -> RehearsalOutcome {
     let cleanup_report = cleanup_manager.execute_failure_cleanup(runner, &run_context);
-    RehearsalOutcome::Failed(RehearsalFailure {
+    let mut failure = RehearsalFailure {
         run_context,
         stage,
         error,
         cleanup_report: Some(cleanup_report),
-    })
+        summary_path: None,
+        step_log_path: None,
+    };
+    write_observability_artifacts(&mut failure, runner);
+    RehearsalOutcome::Failed(failure)
 }
 
 #[derive(Debug)]
@@ -178,6 +195,8 @@ pub struct RehearsalSuccess {
     verification_report: VerificationReport,
     cleanup_report: CleanupReport,
     surfaced_values: BTreeMap<String, String>,
+    summary_path: Option<PathBuf>,
+    step_log_path: Option<PathBuf>,
 }
 
 impl RehearsalSuccess {
@@ -196,6 +215,14 @@ impl RehearsalSuccess {
     pub fn surfaced_values(&self) -> &BTreeMap<String, String> {
         &self.surfaced_values
     }
+
+    pub fn summary_path(&self) -> Option<&Path> {
+        self.summary_path.as_deref()
+    }
+
+    pub fn step_log_path(&self) -> Option<&Path> {
+        self.step_log_path.as_deref()
+    }
 }
 
 #[derive(Debug)]
@@ -204,6 +231,8 @@ pub struct RehearsalFailure {
     stage: RehearsalStage,
     error: RehearsalError,
     cleanup_report: Option<CleanupReport>,
+    summary_path: Option<PathBuf>,
+    step_log_path: Option<PathBuf>,
 }
 
 impl RehearsalFailure {
@@ -221,6 +250,14 @@ impl RehearsalFailure {
 
     pub fn cleanup_report(&self) -> Option<&CleanupReport> {
         self.cleanup_report.as_ref()
+    }
+
+    pub fn summary_path(&self) -> Option<&Path> {
+        self.summary_path.as_deref()
+    }
+
+    pub fn step_log_path(&self) -> Option<&Path> {
+        self.step_log_path.as_deref()
     }
 }
 
@@ -272,6 +309,185 @@ impl std::error::Error for RehearsalError {
             Self::Verification(source) => Some(source),
             Self::CleanupFailed => None,
         }
+    }
+}
+
+trait ObservableOutcome {
+    fn run_context(&self) -> &RunContext;
+    fn render_summary(&self) -> String;
+    fn set_summary_path(&mut self, path: PathBuf);
+    fn set_step_log_path(&mut self, path: PathBuf);
+}
+
+impl ObservableOutcome for RehearsalSuccess {
+    fn run_context(&self) -> &RunContext {
+        &self.run_context
+    }
+
+    fn render_summary(&self) -> String {
+        let surfaced_values = render_key_values(self.surfaced_values());
+        format!(
+            "status=succeeded\nrun_id={}\nroot_dir={}\nartifacts_dir={}\npreserved_dir={}\nsummary_path={}\nstep_log_path={}\nverification_failures=0\nsurfaced_values={}\n",
+            self.run_context.run_id(),
+            self.run_context.root_dir().display(),
+            self.run_context.artifacts_dir().display(),
+            self.run_context.preserved_dir().display(),
+            self.run_context
+                .artifact_path("run/rehearsal-summary.txt")
+                .display(),
+            self.run_context
+                .artifact_path("run/step-events.log")
+                .display(),
+            surfaced_values,
+        )
+    }
+
+    fn set_summary_path(&mut self, path: PathBuf) {
+        self.summary_path = Some(path);
+    }
+
+    fn set_step_log_path(&mut self, path: PathBuf) {
+        self.step_log_path = Some(path);
+    }
+}
+
+impl ObservableOutcome for RehearsalFailure {
+    fn run_context(&self) -> &RunContext {
+        &self.run_context
+    }
+
+    fn render_summary(&self) -> String {
+        let cleanup_report = self.cleanup_report.as_ref();
+        let recovery_hints = cleanup_report
+            .map(|report| {
+                report
+                    .recovery_hints()
+                    .iter()
+                    .map(|hint| format!("{}: {}", hint.action_name, hint.hint))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
+            .unwrap_or_default();
+        let preserved_artifacts = cleanup_report
+            .map(|report| {
+                report
+                    .preserved_artifacts()
+                    .iter()
+                    .map(|artifact| artifact.preserved_path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
+            .unwrap_or_default();
+        let cleanup_failures = cleanup_report
+            .map(|report| report.has_failures())
+            .unwrap_or(false);
+        format!(
+            "status=failed\nrun_id={}\nstage={}\nerror={}\nroot_dir={}\nartifacts_dir={}\npreserved_dir={}\nsummary_path={}\nstep_log_path={}\ncleanup_failures={cleanup_failures}\npreserved_artifacts={preserved_artifacts}\nrecovery_hints={recovery_hints}\n",
+            self.run_context.run_id(),
+            self.stage,
+            self.error,
+            self.run_context.root_dir().display(),
+            self.run_context.artifacts_dir().display(),
+            self.run_context.preserved_dir().display(),
+            self.run_context
+                .artifact_path("run/rehearsal-summary.txt")
+                .display(),
+            self.run_context
+                .artifact_path("run/step-events.log")
+                .display(),
+        )
+    }
+
+    fn set_summary_path(&mut self, path: PathBuf) {
+        self.summary_path = Some(path);
+    }
+
+    fn set_step_log_path(&mut self, path: PathBuf) {
+        self.step_log_path = Some(path);
+    }
+}
+
+fn write_observability_artifacts(outcome: &mut dyn ObservableOutcome, runner: &StepRunner) {
+    let step_log_path = outcome.run_context().artifact_path("run/step-events.log");
+    let summary_path = outcome
+        .run_context()
+        .artifact_path("run/rehearsal-summary.txt");
+    let _ = write_step_log(&step_log_path, &runner.recorded_events());
+    let _ = write_summary(&summary_path, &outcome.render_summary());
+    if step_log_path.is_file() {
+        outcome.set_step_log_path(step_log_path);
+    }
+    if summary_path.is_file() {
+        outcome.set_summary_path(summary_path);
+    }
+}
+
+fn write_step_log(path: &Path, events: &[StepEvent]) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut rendered = String::new();
+    for event in events {
+        rendered.push_str(&render_step_event(event));
+        rendered.push('\n');
+    }
+    fs::write(path, rendered)
+}
+
+fn write_summary(path: &Path, summary: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, summary)
+}
+
+fn render_step_event(event: &StepEvent) -> String {
+    match event {
+        StepEvent::Started { step_name, command } => {
+            format!("started step={} command={command}", step_name.as_str())
+        }
+        StepEvent::Finished { step_name, status } => {
+            format!(
+                "finished step={} status={}",
+                step_name.as_str(),
+                render_status(status)
+            )
+        }
+    }
+}
+
+fn render_status(status: &StepTerminalStatus) -> String {
+    match status {
+        StepTerminalStatus::Succeeded => "succeeded".to_string(),
+        StepTerminalStatus::Failed { exit_code } => match exit_code {
+            Some(exit_code) => format!("failed({exit_code})"),
+            None => "failed".to_string(),
+        },
+        StepTerminalStatus::SpawnError { message } => format!("spawn-error({message})"),
+    }
+}
+
+fn render_key_values(values: &BTreeMap<String, String>) -> String {
+    values
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+impl fmt::Display for RehearsalStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Materialize => "materialize",
+            Self::Prepare => "prepare",
+            Self::Initialize => "initialize",
+            Self::Deploy => "deploy",
+            Self::Outputs => "outputs",
+            Self::Discover => "discover",
+            Self::Verify => "verify",
+            Self::Teardown => "teardown",
+        };
+        f.write_str(value)
     }
 }
 
@@ -398,6 +614,10 @@ mod tests {
             _runner: &StepRunner,
         ) -> Result<ScenarioPreparation, ScenarioError> {
             let preparation = ScenarioPreparation::new(BackendRequest::new(&self.deployment_root))
+                .with_preparation_step(
+                    StepCommand::new("prepare-step", "/bin/sh")
+                        .with_args(["-c".to_string(), "printf 'prepared' >/dev/null".to_string()]),
+                )
                 .with_cleanup_action(
                     CleanupAction::new(
                         "scenario-cleanup",
@@ -486,6 +706,20 @@ mod tests {
                     cleanup_log,
                     "discovery-cleanup\nbackend-destroy\nscenario-cleanup\n"
                 );
+                let summary_path = success
+                    .summary_path()
+                    .expect("summary path should be recorded");
+                let step_log_path = success
+                    .step_log_path()
+                    .expect("step log path should be recorded");
+                let summary = fs::read_to_string(summary_path)?;
+                let step_log = fs::read_to_string(step_log_path)?;
+                assert!(summary.contains("status=succeeded"));
+                assert!(summary.contains("artifacts_dir="));
+                assert!(summary.contains("step_log_path="));
+                assert!(summary.contains("surfaced_values=service=ok"));
+                assert!(step_log.contains("started step=prepare-step"));
+                assert!(step_log.contains("finished step=backend-destroy-step status=succeeded"));
             }
             RehearsalOutcome::Failed(failure) => {
                 panic!(
@@ -539,6 +773,19 @@ mod tests {
                         .join("cleanup/failure-artifact.txt")
                         .is_file()
                 );
+                let summary_path = failure
+                    .summary_path()
+                    .expect("summary path should be recorded");
+                let step_log_path = failure
+                    .step_log_path()
+                    .expect("step log path should be recorded");
+                let summary = fs::read_to_string(summary_path)?;
+                let step_log = fs::read_to_string(step_log_path)?;
+                assert!(summary.contains("status=failed"));
+                assert!(summary.contains("stage=prepare"));
+                assert!(summary.contains("preserved_artifacts="));
+                assert!(summary.contains("step_log_path="));
+                assert!(step_log.contains("finished step=prepare-step status=failed(23)"));
             }
             RehearsalOutcome::Succeeded(_) => panic!("expected failure outcome"),
         }

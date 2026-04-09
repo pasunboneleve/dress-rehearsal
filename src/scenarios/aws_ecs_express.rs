@@ -2,7 +2,7 @@ use crate::backends::BackendRequest;
 use crate::context::RunContext;
 use crate::scenarios::{
     Scenario, ScenarioDeployment, ScenarioDiscovery, ScenarioError, ScenarioPreparation,
-    ScenarioTarget, ScenarioVerification, require_output,
+    ScenarioTarget, ScenarioVerification,
 };
 use crate::steps::{StepCommand, StepRunner};
 use std::path::{Path, PathBuf};
@@ -11,29 +11,17 @@ use std::path::{Path, PathBuf};
 pub struct AwsEcsExpressScenarioConfig {
     deployment_root: PathBuf,
     working_directory: Option<PathBuf>,
-    service_arn_output_key: String,
-    url_output_key: String,
     region: String,
-    expected_health_path: String,
     aws_cli_program: PathBuf,
-    docker_program: PathBuf,
 }
 
 impl AwsEcsExpressScenarioConfig {
-    pub fn new(
-        deployment_root: impl Into<PathBuf>,
-        region: impl Into<String>,
-        expected_health_path: impl Into<String>,
-    ) -> Self {
+    pub fn new(deployment_root: impl Into<PathBuf>, region: impl Into<String>) -> Self {
         Self {
             deployment_root: deployment_root.into(),
             working_directory: None,
-            service_arn_output_key: "ecs_express_service_arn".to_string(),
-            url_output_key: "service_url".to_string(),
             region: region.into(),
-            expected_health_path: expected_health_path.into(),
             aws_cli_program: PathBuf::from("aws"),
-            docker_program: PathBuf::from("docker"),
         }
     }
 
@@ -45,28 +33,12 @@ impl AwsEcsExpressScenarioConfig {
         self.working_directory.as_deref()
     }
 
-    pub fn service_arn_output_key(&self) -> &str {
-        &self.service_arn_output_key
-    }
-
-    pub fn url_output_key(&self) -> &str {
-        &self.url_output_key
-    }
-
     pub fn region(&self) -> &str {
         &self.region
     }
 
-    pub fn expected_health_path(&self) -> &str {
-        &self.expected_health_path
-    }
-
     pub fn aws_cli_program(&self) -> &Path {
         &self.aws_cli_program
-    }
-
-    pub fn docker_program(&self) -> &Path {
-        &self.docker_program
     }
 
     pub fn with_working_directory(mut self, working_directory: impl Into<PathBuf>) -> Self {
@@ -74,23 +46,8 @@ impl AwsEcsExpressScenarioConfig {
         self
     }
 
-    pub fn with_service_arn_output_key(mut self, key: impl Into<String>) -> Self {
-        self.service_arn_output_key = key.into();
-        self
-    }
-
-    pub fn with_url_output_key(mut self, key: impl Into<String>) -> Self {
-        self.url_output_key = key.into();
-        self
-    }
-
     pub fn with_aws_cli_program(mut self, program: impl Into<PathBuf>) -> Self {
         self.aws_cli_program = program.into();
-        self
-    }
-
-    pub fn with_docker_program(mut self, program: impl Into<PathBuf>) -> Self {
-        self.docker_program = program.into();
         self
     }
 }
@@ -111,9 +68,8 @@ impl AwsEcsExpressScenario {
 
     pub fn prerequisite_check(&self) -> StepCommand {
         let aws_check = shell_presence_check(self.config.aws_cli_program());
-        let docker_check = shell_presence_check(self.config.docker_program());
         StepCommand::new("aws-ecs-prerequisites", "/bin/sh")
-            .with_args(["-c".to_string(), format!("{aws_check} && {docker_check}")])
+            .with_args(["-c".to_string(), aws_check])
     }
 
     fn backend_request(&self) -> BackendRequest {
@@ -128,18 +84,8 @@ impl AwsEcsExpressScenario {
         request
     }
 
-    fn preparation_metadata(&self) -> [(String, String); 3] {
-        [
-            ("region".to_string(), self.config.region().to_string()),
-            (
-                "health_path".to_string(),
-                self.config.expected_health_path().to_string(),
-            ),
-            (
-                "service_arn_output_key".to_string(),
-                self.config.service_arn_output_key().to_string(),
-            ),
-        ]
+    fn preparation_metadata(&self) -> [(String, String); 1] {
+        [("region".to_string(), self.config.region().to_string())]
     }
 }
 
@@ -178,32 +124,19 @@ impl Scenario for AwsEcsExpressScenario {
 
     fn discover(
         &self,
-        deployment: &ScenarioDeployment,
+        _deployment: &ScenarioDeployment,
         _runner: &StepRunner,
     ) -> Result<ScenarioDiscovery, ScenarioError> {
-        let service_arn = require_output(
-            deployment.outputs(),
-            self.name(),
-            self.config.service_arn_output_key(),
-        )?;
-        let service_url = require_output(
-            deployment.outputs(),
-            self.name(),
-            self.config.url_output_key(),
-        )?;
-
         Ok(ScenarioDiscovery::new(
             ScenarioVerification::new(
-                "ecs service reachable",
-                ScenarioTarget::HttpEndpoint {
-                    url: join_url_path(service_url, self.config.expected_health_path()),
+                "apply completed",
+                ScenarioTarget::NamedOutput {
+                    key: "lifecycle".to_string(),
+                    value: "applied".to_string(),
                 },
             )
-            .with_metadata("service_arn", service_arn)
             .with_metadata("region", self.config.region()),
         )
-        .with_surfaced_value("service_arn", service_arn)
-        .with_surfaced_value("service_url", service_url)
         .with_surfaced_value("region", self.config.region()))
     }
 }
@@ -218,16 +151,6 @@ fn shell_presence_check(program: &Path) -> String {
         format!("test -x {}", shell_quote_path(program))
     } else {
         format!("command -v {} >/dev/null", shell_quote_path(program))
-    }
-}
-
-fn join_url_path(base_url: &str, path: &str) -> String {
-    let base_url = base_url.trim_end_matches('/');
-    let path = path.trim_start_matches('/');
-    if path.is_empty() {
-        base_url.to_string()
-    } else {
-        format!("{base_url}/{path}")
     }
 }
 
@@ -278,7 +201,7 @@ mod tests {
         run_context.materialize()?;
 
         let scenario = AwsEcsExpressScenario::new(
-            AwsEcsExpressScenarioConfig::new(&deployment_root, "ap-southeast-2", "/health")
+            AwsEcsExpressScenarioConfig::new(&deployment_root, "ap-southeast-2")
                 .with_working_directory(deployment_root.join("env/dev")),
         );
 
@@ -303,8 +226,8 @@ mod tests {
             "aws-ecs-prerequisites"
         );
         assert_eq!(
-            preparation.metadata().get("health_path"),
-            Some(&"/health".to_string())
+            preparation.metadata().get("region"),
+            Some(&"ap-southeast-2".to_string())
         );
         assert!(preparation.metadata().contains_key("prerequisite_step"));
         assert_eq!(preparation.cleanup_actions().len(), 0);
@@ -324,7 +247,6 @@ mod tests {
         let scenario = AwsEcsExpressScenario::new(AwsEcsExpressScenarioConfig::new(
             &deployment_root,
             "ap-southeast-2",
-            "/health",
         ));
 
         let preparation = scenario
@@ -341,23 +263,16 @@ mod tests {
     }
 
     #[test]
-    fn discover_maps_backend_outputs_into_http_verification_target() {
+    fn discover_maps_lifecycle_rehearsal_into_named_verification_target() {
         let scenario = AwsEcsExpressScenario::new(AwsEcsExpressScenarioConfig::new(
             "/tmp/scenario",
             "us-east-1",
-            "/health",
         ));
         let run_context =
             RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-ecs-0002"));
         let request = BackendRequest::new("/tmp/scenario");
         let session = BackendSession::new(&run_context, "terraform", &request);
-        let mut outputs = BackendOutputs::new();
-        outputs.insert(
-            "ecs_express_service_arn",
-            "arn:aws:ecs:us-east-1:123456789012:service/express/demo",
-        );
-        outputs.insert("service_url", "https://service.example.test");
-        let deployment = ScenarioDeployment::new("terraform", session, outputs);
+        let deployment = ScenarioDeployment::new("terraform", session, BackendOutputs::new());
 
         let discovery = scenario
             .discover(&deployment, &StepRunner::new())
@@ -366,13 +281,18 @@ mod tests {
         assert_eq!(discovery.cleanup_actions().len(), 0);
         assert_eq!(
             discovery.verification().target(),
-            &ScenarioTarget::HttpEndpoint {
-                url: "https://service.example.test/health".to_string()
+            &ScenarioTarget::NamedOutput {
+                key: "lifecycle".to_string(),
+                value: "applied".to_string()
             }
         );
         assert_eq!(
-            discovery.verification().metadata().get("service_arn"),
-            Some(&"arn:aws:ecs:us-east-1:123456789012:service/express/demo".to_string())
+            discovery.verification().metadata().get("region"),
+            Some(&"us-east-1".to_string())
+        );
+        assert_eq!(
+            discovery.surfaced_values().get("region"),
+            Some(&"us-east-1".to_string())
         );
     }
 
@@ -383,7 +303,6 @@ mod tests {
         let scenario = AwsEcsExpressScenario::new(AwsEcsExpressScenarioConfig::new(
             "/definitely/not/a/real/scenario",
             "us-east-1",
-            "/health",
         ));
 
         let error = scenario
@@ -394,11 +313,10 @@ mod tests {
     }
 
     #[test]
-    fn discover_requires_service_specific_outputs() {
+    fn discover_does_not_require_service_specific_outputs() {
         let scenario = AwsEcsExpressScenario::new(AwsEcsExpressScenarioConfig::new(
             "/tmp/scenario",
             "us-east-1",
-            "/health",
         ));
         let run_context =
             RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-ecs-0004"));
@@ -406,40 +324,15 @@ mod tests {
         let session = BackendSession::new(&run_context, "terraform", &request);
         let deployment = ScenarioDeployment::new("terraform", session, BackendOutputs::new());
 
-        let error = scenario
-            .discover(&deployment, &StepRunner::new())
-            .expect_err("missing outputs should fail");
-
-        assert!(error.to_string().contains("ecs_express_service_arn"));
-    }
-
-    #[test]
-    fn discover_normalizes_health_url_joining() {
-        let scenario = AwsEcsExpressScenario::new(AwsEcsExpressScenarioConfig::new(
-            "/tmp/scenario",
-            "us-east-1",
-            "health",
-        ));
-        let run_context =
-            RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-ecs-0005"));
-        let request = BackendRequest::new("/tmp/scenario");
-        let session = BackendSession::new(&run_context, "terraform", &request);
-        let mut outputs = BackendOutputs::new();
-        outputs.insert(
-            "ecs_express_service_arn",
-            "arn:aws:ecs:us-east-1:123456789012:service/express/demo",
-        );
-        outputs.insert("service_url", "https://service.example.test/");
-        let deployment = ScenarioDeployment::new("terraform", session, outputs);
-
         let discovery = scenario
             .discover(&deployment, &StepRunner::new())
             .expect("discovery should succeed");
 
         assert_eq!(
             discovery.verification().target(),
-            &ScenarioTarget::HttpEndpoint {
-                url: "https://service.example.test/health".to_string()
+            &ScenarioTarget::NamedOutput {
+                key: "lifecycle".to_string(),
+                value: "applied".to_string()
             }
         );
     }

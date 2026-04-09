@@ -94,8 +94,6 @@ fn load_smoke_config() -> Result<SmokeConfig, String> {
     let runs_root =
         optional_env_path("DRESS_RUNS_ROOT").unwrap_or_else(|| deployment_root.join(".dress-runs"));
     let aws_region = required_env("DRESS_AWS_REGION").or_else(|_| required_env("AWS_REGION"))?;
-    let expected_health_path =
-        optional_env("DRESS_EXPECTED_HEALTH_PATH").unwrap_or_else(|| "/health".to_string());
     let working_directory = optional_env_path("DRESS_WORKING_DIRECTORY");
 
     let mut backend_config =
@@ -107,8 +105,7 @@ fn load_smoke_config() -> Result<SmokeConfig, String> {
         backend_config = backend_config.with_backend_config_file(path);
     }
 
-    let mut scenario_config =
-        AwsEcsExpressScenarioConfig::new(&deployment_root, aws_region, expected_health_path);
+    let mut scenario_config = AwsEcsExpressScenarioConfig::new(&deployment_root, aws_region);
     if let Some(path) = working_directory.clone() {
         scenario_config = scenario_config.with_working_directory(path);
     }
@@ -185,13 +182,12 @@ Required environment:
 Optional environment:
   DRESS_RUNS_ROOT
   DRESS_WORKING_DIRECTORY
-  DRESS_EXPECTED_HEALTH_PATH
   DRESS_TERRAFORM_BINARY
   DRESS_TF_VAR_FILES
   DRESS_TF_BACKEND_CONFIG_FILES
 
 Deployment root contract:
-  Terraform/OpenTofu must output `ecs_express_service_arn` and `service_url`"
+  Terraform/OpenTofu must be runnable for apply and destroy"
 }
 
 #[cfg(test)]

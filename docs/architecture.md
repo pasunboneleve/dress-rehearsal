@@ -44,27 +44,30 @@ Future room: CloudFormation.
 
 ### `Scenario`
 
-Owns the contract for what is being rehearsed:
+Owns the minimal rehearsal contract for a target:
 - prerequisite checks
-- configuration materialization
-- bootstrap preparation
-- deployed-surface discovery
-- verification wiring
-- cleanup expectations
+- backend input shaping when needed
+- discovery of backend-managed outputs when needed
+
+A scenario does not own:
+- direct cloud-service lifecycle control
+- service-specific teardown commands
+- application-level correctness checks
 
 Examples:
-- AWS ECS Express HTTP service
+- AWS ECS Express infrastructure rehearsal
 - AWS Lambda Function URL
 - GCP Cloud Run HTTP service
 
 ### `VerificationSpec`
 
-Owns success criteria:
-- readiness target
-- request shape
-- assertions
-- retry/timeout policy
-- failure artifact capture
+For the first implementation, verification is lifecycle verification:
+- did apply complete successfully
+- did destroy/cleanup complete successfully
+- were logs, summaries, and failure artifacts preserved
+
+Application-level verification such as HTTP health checks, readiness polling, and
+response assertions is explicitly out of scope for the first version.
 
 ## Testing Model
 
@@ -116,16 +119,16 @@ boundaries:
 
 Initial concrete target:
 - backend: Terraform/OpenTofu
-- scenario: AWS ECS Express HTTP service rehearsal
-- verification: HTTP fixture response
+- scenario: AWS ECS Express infrastructure rehearsal
+- verification: lifecycle observability only
 
 Execution path:
 
 1. CLI parses a command into a request.
 2. `RunContext` materializes an isolated run.
-3. `Scenario` prepares backend inputs and verification behavior.
+3. `Scenario` prepares minimal prerequisites and backend inputs.
 4. `DeploymentBackend` applies infrastructure.
-5. `VerificationSpec` verifies the deployed surface.
+5. Observability artifacts are recorded for the apply result.
 6. `CleanupManager` tears the run down or preserves artifacts on failure.
 
 ## Failure Semantics
@@ -136,6 +139,9 @@ Execution path:
 - Explicit teardown remains available for operator-driven recovery.
 - The early implementation should prefer deterministic teardown over partial
   rollback heuristics.
+- The first version treats backend apply/destroy as the rehearsal boundary.
+- Failures must be diagnosable from preserved step logs, summaries, and backend artifacts.
+- The harness must not issue direct cloud-service lifecycle commands outside the backend contract.
 
 ## Operational Invariants
 

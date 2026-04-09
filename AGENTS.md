@@ -118,11 +118,19 @@ A `Scenario` is not just:
 - a shell pipeline
 
 A `Scenario` is the target-specific rehearsal contract:
-- preparation
-- deployment-specific discovery
-- verification setup
 - prerequisite checks
-- target-specific behavior
+- backend input shaping
+- backend output discovery when needed
+
+For the first version, a `Scenario` must remain narrow:
+- prerequisite checks
+- backend input shaping
+- backend output discovery when needed
+
+A `Scenario` must not:
+- issue direct cloud-service lifecycle commands
+- own service-specific deploy, scale, or drain behavior
+- perform application-level verification such as HTTP health checks
 
 ## Scope Discipline
 
@@ -132,12 +140,17 @@ Do not build:
 - a multi-cloud platform
 - a plugin marketplace
 - support for hypothetical future use cases before real demand
+- cloud-service lifecycle orchestration outside `DeploymentBackend`
+- application correctness checks into the first AWS scenario
+- service-specific lifecycle contracts such as ECS cluster/service draining
 
 Do build:
 - a small, explicit infrastructure rehearsal engine
 - one happy path at a time
 - reusable boundaries proven by at least two real use cases before broadening
   them
+- a lifecycle rehearsal focused on backend apply/destroy
+- strong observability around apply failure, destroy failure, and preserved artifacts
 
 ## Implementation Strategy
 
@@ -197,10 +210,29 @@ Before merging a change, ask:
 - Does this reduce coupling or hide it?
 - Does cleanup become more guaranteed or less?
 - Does verification become more explicit or more procedural?
+- Does this keep lifecycle control inside the deployment backend?
+- Does this avoid coupling the first scenario to service-specific runtime commands?
+- Does verification stay focused on lifecycle success/failure and diagnosability?
 - Would a second backend or scenario fit without reshaping the core?
 - Is this abstraction demanded by real behavior, or invented too early?
 - Can this behavior be tested at unit, mock, and real integration levels
   without redesigning the boundary?
+
+## First-Version Boundary
+
+The first AWS path is a lifecycle rehearsal, not a service test harness.
+
+Allowed:
+- Terraform/OpenTofu apply
+- Terraform/OpenTofu destroy
+- prerequisite checks
+- output discovery needed to describe the run
+- artifact and log preservation
+
+Not allowed:
+- direct AWS service lifecycle commands such as `aws ecs update-service`
+- runtime health checks, HTTP assertions, or readiness polling
+- requiring service-specific identifiers for lifecycle control outside backend destroy
 
 ## Naming
 

@@ -38,20 +38,21 @@ Goal:
 
 ## Phase 5: Verification model
 
-- define `VerificationSpec`
-- sketch HTTP verification flow
+- define lifecycle-oriented verification reporting
+- capture apply/destroy outcomes and failure evidence
+- defer application-level assertions
 
 Goal:
-- make readiness, assertions, and failure evidence explicit
+- make failure evidence explicit without expanding into service correctness checks
 
 ## Phase 6: First AWS happy path
 
 - Terraform/OpenTofu backend
-- AWS ECS Express HTTP scenario
-- deploy, verify, teardown through the new abstractions
+- AWS ECS Express scenario
+- apply, artifact capture, destroy through the new abstractions
 
 Goal:
-- prove the execution model on one real infrastructure rehearsal
+- prove the execution model on one real infrastructure rehearsal with clear observability
 
 ## Phase 7: Refactor and stabilize
 
@@ -71,3 +72,6 @@ Goal:
 - dynamic plugins
 - multiple scenario families at once
 - broad generic machinery before the AWS path works cleanly
+- direct cloud-service lifecycle commands outside backend apply/destroy
+- application-level verification such as HTTP health checks or readiness polling
+- service-specific lifecycle control contracts

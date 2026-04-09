@@ -30,12 +30,16 @@ pub fn rehearse(
                 source,
             },
             cleanup_report: None,
+            failed_step_stdout_path: None,
+            failed_step_stderr_path: None,
             summary_path: None,
             step_log_path: None,
         };
         write_observability_artifacts(&mut failure, runner);
         return RehearsalOutcome::Failed(failure);
     }
+
+    runner.set_artifact_root(run_context.artifact_path("steps"));
 
     let mut cleanup_manager = CleanupManager::new();
 
@@ -144,6 +148,8 @@ pub fn rehearse(
             stage: RehearsalStage::Teardown,
             error: RehearsalError::CleanupFailed,
             cleanup_report: Some(cleanup_report),
+            failed_step_stdout_path: None,
+            failed_step_stderr_path: None,
             summary_path: None,
             step_log_path: None,
         };
@@ -176,6 +182,8 @@ fn failed_outcome(
         stage,
         error,
         cleanup_report: Some(cleanup_report),
+        failed_step_stdout_path: None,
+        failed_step_stderr_path: None,
         summary_path: None,
         step_log_path: None,
     };
@@ -231,6 +239,8 @@ pub struct RehearsalFailure {
     stage: RehearsalStage,
     error: RehearsalError,
     cleanup_report: Option<CleanupReport>,
+    failed_step_stdout_path: Option<PathBuf>,
+    failed_step_stderr_path: Option<PathBuf>,
     summary_path: Option<PathBuf>,
     step_log_path: Option<PathBuf>,
 }
@@ -250,6 +260,14 @@ impl RehearsalFailure {
 
     pub fn cleanup_report(&self) -> Option<&CleanupReport> {
         self.cleanup_report.as_ref()
+    }
+
+    pub fn failed_step_stdout_path(&self) -> Option<&Path> {
+        self.failed_step_stdout_path.as_deref()
+    }
+
+    pub fn failed_step_stderr_path(&self) -> Option<&Path> {
+        self.failed_step_stderr_path.as_deref()
     }
 
     pub fn summary_path(&self) -> Option<&Path> {
@@ -317,6 +335,11 @@ trait ObservableOutcome {
     fn render_summary(&self) -> String;
     fn set_summary_path(&mut self, path: PathBuf);
     fn set_step_log_path(&mut self, path: PathBuf);
+    fn set_failed_step_output_paths(
+        &mut self,
+        stdout_path: Option<PathBuf>,
+        stderr_path: Option<PathBuf>,
+    );
 }
 
 impl ObservableOutcome for RehearsalSuccess {
@@ -348,6 +371,13 @@ impl ObservableOutcome for RehearsalSuccess {
 
     fn set_step_log_path(&mut self, path: PathBuf) {
         self.step_log_path = Some(path);
+    }
+
+    fn set_failed_step_output_paths(
+        &mut self,
+        _stdout_path: Option<PathBuf>,
+        _stderr_path: Option<PathBuf>,
+    ) {
     }
 }
 
@@ -388,7 +418,7 @@ impl ObservableOutcome for RehearsalFailure {
             .map(|report| report.has_failures())
             .unwrap_or(false);
         format!(
-            "status=failed\nrun_id={}\nstage={}\nerror={}\nroot_dir={}\nartifacts_dir={}\npreserved_dir={}\nsummary_path={}\nstep_log_path={}\ncleanup_failures={cleanup_failures}\npreserved_artifacts={preserved_artifacts}\nrecovery_hints={recovery_hints}\n",
+            "status=failed\nrun_id={}\nstage={}\nerror={}\nroot_dir={}\nartifacts_dir={}\npreserved_dir={}\nsummary_path={}\nstep_log_path={}\nfailed_step_stdout_path={}\nfailed_step_stderr_path={}\ncleanup_failures={cleanup_failures}\npreserved_artifacts={preserved_artifacts}\nrecovery_hints={recovery_hints}\n",
             self.run_context.run_id(),
             self.stage,
             sanitize_summary_value(&self.error.to_string()),
@@ -401,6 +431,14 @@ impl ObservableOutcome for RehearsalFailure {
             self.run_context
                 .artifact_path("run/step-events.log")
                 .display(),
+            self.failed_step_stdout_path
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            self.failed_step_stderr_path
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
         )
     }
 
@@ -411,6 +449,15 @@ impl ObservableOutcome for RehearsalFailure {
     fn set_step_log_path(&mut self, path: PathBuf) {
         self.step_log_path = Some(path);
     }
+
+    fn set_failed_step_output_paths(
+        &mut self,
+        stdout_path: Option<PathBuf>,
+        stderr_path: Option<PathBuf>,
+    ) {
+        self.failed_step_stdout_path = stdout_path;
+        self.failed_step_stderr_path = stderr_path;
+    }
 }
 
 fn write_observability_artifacts(outcome: &mut dyn ObservableOutcome, runner: &StepRunner) {
@@ -418,6 +465,19 @@ fn write_observability_artifacts(outcome: &mut dyn ObservableOutcome, runner: &S
     let summary_path = outcome
         .run_context()
         .artifact_path("run/rehearsal-summary.txt");
+    let failed_step = runner
+        .recorded_executions()
+        .into_iter()
+        .rev()
+        .find(|execution| execution.status().is_failed());
+    outcome.set_failed_step_output_paths(
+        failed_step
+            .as_ref()
+            .and_then(|execution| execution.stdout_path().map(Path::to_path_buf)),
+        failed_step
+            .as_ref()
+            .and_then(|execution| execution.stderr_path().map(Path::to_path_buf)),
+    );
     if write_step_log(&step_log_path, &runner.recorded_events()).is_ok() {
         outcome.set_step_log_path(step_log_path);
     }
@@ -450,13 +510,24 @@ fn render_step_event(event: &StepEvent) -> String {
         StepEvent::Started { step_name, command } => {
             format!("started step={} command={command}", step_name.as_str())
         }
-        StepEvent::Finished { step_name, status } => {
-            format!(
-                "finished step={} status={}",
-                step_name.as_str(),
-                render_status(status)
-            )
-        }
+        StepEvent::Finished {
+            step_name,
+            status,
+            stdout_path,
+            stderr_path,
+        } => format!(
+            "finished step={} status={} stdout_path={} stderr_path={}",
+            step_name.as_str(),
+            render_status(status),
+            stdout_path
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            stderr_path
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+        ),
     }
 }
 

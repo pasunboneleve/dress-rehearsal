@@ -188,7 +188,10 @@ Optional environment:
   DRESS_EXPECTED_HEALTH_PATH
   DRESS_TERRAFORM_BINARY
   DRESS_TF_VAR_FILES
-  DRESS_TF_BACKEND_CONFIG_FILES"
+  DRESS_TF_BACKEND_CONFIG_FILES
+
+Deployment root contract:
+  Terraform/OpenTofu must output `ecs_express_service_arn` and `service_url`"
 }
 
 #[cfg(test)]

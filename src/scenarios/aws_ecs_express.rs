@@ -1,5 +1,4 @@
 use crate::backends::BackendRequest;
-use crate::cleanup::CleanupAction;
 use crate::context::RunContext;
 use crate::scenarios::{
     Scenario, ScenarioDeployment, ScenarioDiscovery, ScenarioError, ScenarioPreparation,
@@ -12,8 +11,7 @@ use std::path::{Path, PathBuf};
 pub struct AwsEcsExpressScenarioConfig {
     deployment_root: PathBuf,
     working_directory: Option<PathBuf>,
-    cluster_output_key: String,
-    service_output_key: String,
+    service_arn_output_key: String,
     url_output_key: String,
     region: String,
     expected_health_path: String,
@@ -30,8 +28,7 @@ impl AwsEcsExpressScenarioConfig {
         Self {
             deployment_root: deployment_root.into(),
             working_directory: None,
-            cluster_output_key: "cluster_name".to_string(),
-            service_output_key: "service_name".to_string(),
+            service_arn_output_key: "ecs_express_service_arn".to_string(),
             url_output_key: "service_url".to_string(),
             region: region.into(),
             expected_health_path: expected_health_path.into(),
@@ -48,12 +45,8 @@ impl AwsEcsExpressScenarioConfig {
         self.working_directory.as_deref()
     }
 
-    pub fn cluster_output_key(&self) -> &str {
-        &self.cluster_output_key
-    }
-
-    pub fn service_output_key(&self) -> &str {
-        &self.service_output_key
+    pub fn service_arn_output_key(&self) -> &str {
+        &self.service_arn_output_key
     }
 
     pub fn url_output_key(&self) -> &str {
@@ -81,13 +74,8 @@ impl AwsEcsExpressScenarioConfig {
         self
     }
 
-    pub fn with_cluster_output_key(mut self, key: impl Into<String>) -> Self {
-        self.cluster_output_key = key.into();
-        self
-    }
-
-    pub fn with_service_output_key(mut self, key: impl Into<String>) -> Self {
-        self.service_output_key = key.into();
+    pub fn with_service_arn_output_key(mut self, key: impl Into<String>) -> Self {
+        self.service_arn_output_key = key.into();
         self
     }
 
@@ -140,7 +128,7 @@ impl AwsEcsExpressScenario {
         request
     }
 
-    fn preparation_metadata(&self) -> [(String, String); 4] {
+    fn preparation_metadata(&self) -> [(String, String); 3] {
         [
             ("region".to_string(), self.config.region().to_string()),
             (
@@ -148,31 +136,10 @@ impl AwsEcsExpressScenario {
                 self.config.expected_health_path().to_string(),
             ),
             (
-                "cluster_output_key".to_string(),
-                self.config.cluster_output_key().to_string(),
-            ),
-            (
-                "service_output_key".to_string(),
-                self.config.service_output_key().to_string(),
+                "service_arn_output_key".to_string(),
+                self.config.service_arn_output_key().to_string(),
             ),
         ]
-    }
-
-    fn ecs_service_drain_cleanup(&self, cluster_name: &str, service_name: &str) -> CleanupAction {
-        let aws_cli = shell_quote_path(self.config.aws_cli_program());
-        CleanupAction::new(
-            "aws-ecs-service-drain",
-            StepCommand::new("aws-ecs-service-drain-step", "/bin/sh").with_args([
-                "-c".to_string(),
-                format!(
-                    "{aws_cli} ecs update-service --region {} --cluster {} --service {} --desired-count 0",
-                    shell_quote_literal(self.config.region()),
-                    shell_quote_literal(cluster_name),
-                    shell_quote_literal(service_name),
-                ),
-            ]),
-        )
-        .recovery_hint("If the ECS service remains active, scale it to zero and inspect target group health.")
     }
 }
 
@@ -214,15 +181,10 @@ impl Scenario for AwsEcsExpressScenario {
         deployment: &ScenarioDeployment,
         _runner: &StepRunner,
     ) -> Result<ScenarioDiscovery, ScenarioError> {
-        let cluster_name = require_output(
+        let service_arn = require_output(
             deployment.outputs(),
             self.name(),
-            self.config.cluster_output_key(),
-        )?;
-        let service_name = require_output(
-            deployment.outputs(),
-            self.name(),
-            self.config.service_output_key(),
+            self.config.service_arn_output_key(),
         )?;
         let service_url = require_output(
             deployment.outputs(),
@@ -237,13 +199,10 @@ impl Scenario for AwsEcsExpressScenario {
                     url: join_url_path(service_url, self.config.expected_health_path()),
                 },
             )
-            .with_metadata("cluster_name", cluster_name)
-            .with_metadata("service_name", service_name)
+            .with_metadata("service_arn", service_arn)
             .with_metadata("region", self.config.region()),
         )
-        .with_cleanup_action(self.ecs_service_drain_cleanup(cluster_name, service_name))
-        .with_surfaced_value("cluster_name", cluster_name)
-        .with_surfaced_value("service_name", service_name)
+        .with_surfaced_value("service_arn", service_arn)
         .with_surfaced_value("service_url", service_url)
         .with_surfaced_value("region", self.config.region()))
     }
@@ -252,10 +211,6 @@ impl Scenario for AwsEcsExpressScenario {
 fn shell_quote_path(path: &Path) -> String {
     let rendered = path.display().to_string();
     format!("'{}'", rendered.replace('\'', r#"'\''"#))
-}
-
-fn shell_quote_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r#"'\''"#))
 }
 
 fn shell_presence_check(program: &Path) -> String {
@@ -397,8 +352,10 @@ mod tests {
         let request = BackendRequest::new("/tmp/scenario");
         let session = BackendSession::new(&run_context, "terraform", &request);
         let mut outputs = BackendOutputs::new();
-        outputs.insert("cluster_name", "dress-cluster");
-        outputs.insert("service_name", "dress-service");
+        outputs.insert(
+            "ecs_express_service_arn",
+            "arn:aws:ecs:us-east-1:123456789012:service/express/demo",
+        );
         outputs.insert("service_url", "https://service.example.test");
         let deployment = ScenarioDeployment::new("terraform", session, outputs);
 
@@ -406,11 +363,7 @@ mod tests {
             .discover(&deployment, &StepRunner::new())
             .expect("discovery should succeed");
 
-        assert_eq!(discovery.cleanup_actions().len(), 1);
-        assert_eq!(
-            discovery.cleanup_actions()[0].name(),
-            "aws-ecs-service-drain"
-        );
+        assert_eq!(discovery.cleanup_actions().len(), 0);
         assert_eq!(
             discovery.verification().target(),
             &ScenarioTarget::HttpEndpoint {
@@ -418,8 +371,8 @@ mod tests {
             }
         );
         assert_eq!(
-            discovery.verification().metadata().get("cluster_name"),
-            Some(&"dress-cluster".to_string())
+            discovery.verification().metadata().get("service_arn"),
+            Some(&"arn:aws:ecs:us-east-1:123456789012:service/express/demo".to_string())
         );
     }
 
@@ -457,7 +410,7 @@ mod tests {
             .discover(&deployment, &StepRunner::new())
             .expect_err("missing outputs should fail");
 
-        assert!(error.to_string().contains("cluster_name"));
+        assert!(error.to_string().contains("ecs_express_service_arn"));
     }
 
     #[test]
@@ -472,8 +425,10 @@ mod tests {
         let request = BackendRequest::new("/tmp/scenario");
         let session = BackendSession::new(&run_context, "terraform", &request);
         let mut outputs = BackendOutputs::new();
-        outputs.insert("cluster_name", "dress-cluster");
-        outputs.insert("service_name", "dress-service");
+        outputs.insert(
+            "ecs_express_service_arn",
+            "arn:aws:ecs:us-east-1:123456789012:service/express/demo",
+        );
         outputs.insert("service_url", "https://service.example.test/");
         let deployment = ScenarioDeployment::new("terraform", session, outputs);
 

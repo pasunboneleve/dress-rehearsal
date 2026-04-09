@@ -363,7 +363,13 @@ impl ObservableOutcome for RehearsalFailure {
                 report
                     .recovery_hints()
                     .iter()
-                    .map(|hint| format!("{}: {}", hint.action_name, hint.hint))
+                    .map(|hint| {
+                        format!(
+                            "{}: {}",
+                            hint.action_name,
+                            sanitize_summary_value(&hint.hint)
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(" | ")
             })
@@ -385,7 +391,7 @@ impl ObservableOutcome for RehearsalFailure {
             "status=failed\nrun_id={}\nstage={}\nerror={}\nroot_dir={}\nartifacts_dir={}\npreserved_dir={}\nsummary_path={}\nstep_log_path={}\ncleanup_failures={cleanup_failures}\npreserved_artifacts={preserved_artifacts}\nrecovery_hints={recovery_hints}\n",
             self.run_context.run_id(),
             self.stage,
-            self.error,
+            sanitize_summary_value(&self.error.to_string()),
             self.run_context.root_dir().display(),
             self.run_context.artifacts_dir().display(),
             self.run_context.preserved_dir().display(),
@@ -412,12 +418,10 @@ fn write_observability_artifacts(outcome: &mut dyn ObservableOutcome, runner: &S
     let summary_path = outcome
         .run_context()
         .artifact_path("run/rehearsal-summary.txt");
-    let _ = write_step_log(&step_log_path, &runner.recorded_events());
-    let _ = write_summary(&summary_path, &outcome.render_summary());
-    if step_log_path.is_file() {
+    if write_step_log(&step_log_path, &runner.recorded_events()).is_ok() {
         outcome.set_step_log_path(step_log_path);
     }
-    if summary_path.is_file() {
+    if write_summary(&summary_path, &outcome.render_summary()).is_ok() {
         outcome.set_summary_path(summary_path);
     }
 }
@@ -470,9 +474,13 @@ fn render_status(status: &StepTerminalStatus) -> String {
 fn render_key_values(values: &BTreeMap<String, String>) -> String {
     values
         .iter()
-        .map(|(key, value)| format!("{key}={value}"))
+        .map(|(key, value)| format!("{key}={}", sanitize_summary_value(value)))
         .collect::<Vec<_>>()
         .join(" | ")
+}
+
+fn sanitize_summary_value(value: &str) -> String {
+    value.replace('\n', "\\n")
 }
 
 impl fmt::Display for RehearsalStage {

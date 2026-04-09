@@ -174,7 +174,7 @@ impl StepRunner {
     }
 
     pub fn run_command(&self, command: &StepCommand) -> Result<StepOutcome, StepError> {
-        let mut sink = RecordingStepEventSink::new(self.recorded_events.clone());
+        let mut sink = NoopStepEventSink;
         self.run_command_with_sink(command, &mut sink)
     }
 
@@ -183,10 +183,12 @@ impl StepRunner {
         command: &StepCommand,
         sink: &mut dyn StepEventSink,
     ) -> Result<StepOutcome, StepError> {
-        sink.on_event(StepEvent::Started {
+        let started_event = StepEvent::Started {
             step_name: command.name().clone(),
             command: command.display_command(),
-        });
+        };
+        self.record_event(&started_event);
+        sink.on_event(started_event);
 
         let output = match command.to_process_command().output() {
             Ok(output) => output,
@@ -196,12 +198,14 @@ impl StepRunner {
                     command: command.display_command(),
                     source,
                 };
-                sink.on_event(StepEvent::Finished {
+                let finished_event = StepEvent::Finished {
                     step_name: command.name().clone(),
                     status: StepTerminalStatus::SpawnError {
                         message: error.to_string(),
                     },
-                });
+                };
+                self.record_event(&finished_event);
+                sink.on_event(finished_event);
                 return Err(error);
             }
         };
@@ -210,20 +214,31 @@ impl StepRunner {
             StepOutcome::from_output(command, output.status, output.stdout, output.stderr);
 
         if outcome.exit_status.success() {
-            sink.on_event(StepEvent::Finished {
+            let finished_event = StepEvent::Finished {
                 step_name: outcome.step_name.clone(),
                 status: StepTerminalStatus::Succeeded,
-            });
+            };
+            self.record_event(&finished_event);
+            sink.on_event(finished_event);
             Ok(outcome)
         } else {
-            sink.on_event(StepEvent::Finished {
+            let finished_event = StepEvent::Finished {
                 step_name: outcome.step_name.clone(),
                 status: StepTerminalStatus::Failed {
                     exit_code: outcome.exit_code(),
                 },
-            });
+            };
+            self.record_event(&finished_event);
+            sink.on_event(finished_event);
             Err(StepError::Failed(outcome))
         }
+    }
+
+    fn record_event(&self, event: &StepEvent) {
+        self.recorded_events
+            .lock()
+            .expect("step event recording mutex should not be poisoned")
+            .push(event.clone());
     }
 }
 
@@ -335,23 +350,10 @@ impl std::error::Error for StepError {
     }
 }
 
-struct RecordingStepEventSink {
-    recorded_events: Arc<Mutex<Vec<StepEvent>>>,
-}
+struct NoopStepEventSink;
 
-impl RecordingStepEventSink {
-    fn new(recorded_events: Arc<Mutex<Vec<StepEvent>>>) -> Self {
-        Self { recorded_events }
-    }
-}
-
-impl StepEventSink for RecordingStepEventSink {
-    fn on_event(&mut self, event: StepEvent) {
-        self.recorded_events
-            .lock()
-            .expect("step event recording mutex should not be poisoned")
-            .push(event);
-    }
+impl StepEventSink for NoopStepEventSink {
+    fn on_event(&mut self, _event: StepEvent) {}
 }
 
 fn render_shell_token(token: &str) -> String {

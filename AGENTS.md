@@ -277,3 +277,53 @@ When ending a work session in this repo:
 
 Do not stop at a locally complete change if the repo workflow still expects the
 work to be synced and pushed.
+
+## Commit Commentary Requirements
+
+Every non-trivial change MUST include a commit message that captures not only
+what changed, but why.
+
+Commit messages must include:
+
+1. Context
+   - What problem or ambiguity triggered this change?
+   - What behavior or assumption was incorrect or unclear?
+
+2. Decision
+   - What change was made?
+   - What boundary or invariant is now enforced?
+
+3. Alternatives considered
+   - At least one alternative approach that was considered
+   - Why it was rejected
+
+4. Tradeoffs
+   - What is intentionally not supported after this change?
+   - What risks or limitations are accepted?
+
+5. Architectural impact
+   - Which core concepts or boundaries are affected?
+   - Does this reinforce or weaken any guardrails?
+
+Example structure:
+
+<short summary>
+
+Context:
+...
+
+Decision:
+...
+
+Alternatives considered:
+- Option A: ...
+- Option B: ...
+Chosen because ...
+
+Tradeoffs:
+...
+
+Architectural impact:
+...
+
+Do not submit commits that only describe "what changed".

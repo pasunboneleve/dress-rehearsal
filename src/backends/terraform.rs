@@ -1,8 +1,10 @@
 use crate::backends::{
     BackendError, BackendOutputs, BackendRequest, BackendSession, DeploymentBackend,
 };
+use crate::cleanup::CleanupAction;
 use crate::context::RunContext;
 use crate::steps::{StepCommand, StepRunner};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -152,6 +154,37 @@ impl TerraformBackend {
 
         Ok(())
     }
+
+    fn parse_outputs(&self, output_json: &str) -> Result<BackendOutputs, BackendError> {
+        let value: Value = serde_json::from_str(output_json).map_err(|source| {
+            BackendError::output_format(
+                self.name(),
+                "outputs",
+                format!("expected terraform JSON object: {source}"),
+            )
+        })?;
+        let object = value.as_object().ok_or_else(|| {
+            BackendError::output_format(
+                self.name(),
+                "outputs",
+                "top-level output was not an object",
+            )
+        })?;
+
+        let mut outputs = BackendOutputs::new();
+        for (key, entry) in object {
+            let output_value = entry.get("value").ok_or_else(|| {
+                BackendError::output_format(
+                    self.name(),
+                    "outputs",
+                    format!("output `{key}` is missing a `value` field"),
+                )
+            })?;
+            outputs.insert(key.clone(), render_output_value(output_value));
+        }
+
+        Ok(outputs)
+    }
 }
 
 impl DeploymentBackend for TerraformBackend {
@@ -197,10 +230,13 @@ impl DeploymentBackend for TerraformBackend {
         let outcome = runner
             .run_command(&output_command)
             .map_err(|source| BackendError::step(self.name(), "outputs", source))?;
+        self.parse_outputs(&outcome.stdout_text())
+    }
 
-        let mut outputs = BackendOutputs::new();
-        outputs.insert("raw_output_json", outcome.stdout_text());
-        Ok(outputs)
+    fn destroy_action(&self, session: &BackendSession) -> CleanupAction {
+        CleanupAction::new("terraform-destroy", self.destroy_command(session)).recovery_hint(
+            "If destroy fails, inspect the terraform state and residual cloud resources before retrying cleanup.",
+        )
     }
 
     fn destroy(&self, session: &BackendSession, runner: &StepRunner) -> Result<(), BackendError> {
@@ -209,6 +245,16 @@ impl DeploymentBackend for TerraformBackend {
             .run_command(&destroy_command)
             .map_err(|source| BackendError::step(self.name(), "destroy", source))?;
         Ok(())
+    }
+}
+
+fn render_output_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Null => "null".to_string(),
+        Value::Array(_) | Value::Object(_) => value.to_string(),
     }
 }
 
@@ -330,6 +376,24 @@ mod tests {
             error.to_string().contains("deployment root does not exist"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn parses_terraform_output_json_into_normalized_values() {
+        let backend = TerraformBackend::new(TerraformBackendConfig::default());
+        let outputs = backend
+            .parse_outputs(
+                r#"{
+                    "cluster_name": {"value": "dress-cluster"},
+                    "desired_count": {"value": 2},
+                    "service_tags": {"value": {"service":"dress"}}
+                }"#,
+            )
+            .expect("terraform output should parse");
+
+        assert_eq!(outputs.get("cluster_name"), Some("dress-cluster"));
+        assert_eq!(outputs.get("desired_count"), Some("2"));
+        assert_eq!(outputs.get("service_tags"), Some(r#"{"service":"dress"}"#));
     }
 
     fn backend_session(run_id: &str) -> BackendSession {

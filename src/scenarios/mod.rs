@@ -5,7 +5,7 @@ pub mod aws_ecs_express;
 use crate::backends::{BackendOutputs, BackendRequest, BackendSession};
 use crate::cleanup::CleanupAction;
 use crate::context::RunContext;
-use crate::steps::StepRunner;
+use crate::steps::{StepCommand, StepRunner};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
@@ -15,6 +15,7 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScenarioPreparation {
     backend_request: BackendRequest,
+    preparation_steps: Vec<StepCommand>,
     cleanup_actions: Vec<CleanupAction>,
     metadata: BTreeMap<String, String>,
 }
@@ -23,6 +24,7 @@ impl ScenarioPreparation {
     pub fn new(backend_request: BackendRequest) -> Self {
         Self {
             backend_request,
+            preparation_steps: Vec::new(),
             cleanup_actions: Vec::new(),
             metadata: BTreeMap::new(),
         }
@@ -36,8 +38,17 @@ impl ScenarioPreparation {
         &self.cleanup_actions
     }
 
+    pub fn preparation_steps(&self) -> &[StepCommand] {
+        &self.preparation_steps
+    }
+
     pub fn metadata(&self) -> &BTreeMap<String, String> {
         &self.metadata
+    }
+
+    pub fn with_preparation_step(mut self, step: StepCommand) -> Self {
+        self.preparation_steps.push(step);
+        self
     }
 
     pub fn with_cleanup_action(mut self, action: CleanupAction) -> Self {
@@ -329,6 +340,7 @@ mod tests {
                 BackendRequest::new("/tmp/scenario-root")
                     .with_working_directory("/tmp/scenario-root/work"),
             )
+            .with_preparation_step(StepCommand::new("prepare-step", "/bin/true"))
             .with_cleanup_action(CleanupAction::new(
                 "cleanup-workspace",
                 StepCommand::new("cleanup-step", "/bin/true"),
@@ -369,6 +381,7 @@ mod tests {
             preparation.backend_request().deployment_root(),
             PathBuf::from("/tmp/scenario-root")
         );
+        assert_eq!(preparation.preparation_steps().len(), 1);
         assert_eq!(preparation.cleanup_actions().len(), 1);
         assert_eq!(
             preparation.metadata().get("service"),

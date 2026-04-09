@@ -1,11 +1,12 @@
 use crate::backends::BackendRequest;
-use crate::cleanup::{CleanupAction, CleanupArtifact};
+use crate::cleanup::CleanupAction;
 use crate::context::RunContext;
 use crate::scenarios::{
     Scenario, ScenarioDeployment, ScenarioDiscovery, ScenarioError, ScenarioPreparation,
     ScenarioTarget, ScenarioVerification, require_output, scenario_file,
 };
 use crate::steps::{StepCommand, StepRunner};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -18,6 +19,8 @@ pub struct AwsEcsExpressScenarioConfig {
     region: String,
     expected_health_path: String,
     task_definition_path: PathBuf,
+    aws_cli_program: PathBuf,
+    docker_program: PathBuf,
 }
 
 impl AwsEcsExpressScenarioConfig {
@@ -35,6 +38,8 @@ impl AwsEcsExpressScenarioConfig {
             region: region.into(),
             expected_health_path: expected_health_path.into(),
             task_definition_path: PathBuf::from("app/task-definition.json"),
+            aws_cli_program: PathBuf::from("aws"),
+            docker_program: PathBuf::from("docker"),
         }
     }
 
@@ -70,6 +75,14 @@ impl AwsEcsExpressScenarioConfig {
         &self.task_definition_path
     }
 
+    pub fn aws_cli_program(&self) -> &Path {
+        &self.aws_cli_program
+    }
+
+    pub fn docker_program(&self) -> &Path {
+        &self.docker_program
+    }
+
     pub fn with_working_directory(mut self, working_directory: impl Into<PathBuf>) -> Self {
         self.working_directory = Some(working_directory.into());
         self
@@ -94,6 +107,16 @@ impl AwsEcsExpressScenarioConfig {
         self.task_definition_path = path.into();
         self
     }
+
+    pub fn with_aws_cli_program(mut self, program: impl Into<PathBuf>) -> Self {
+        self.aws_cli_program = program.into();
+        self
+    }
+
+    pub fn with_docker_program(mut self, program: impl Into<PathBuf>) -> Self {
+        self.docker_program = program.into();
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,17 +134,17 @@ impl AwsEcsExpressScenario {
     }
 
     pub fn prerequisite_check(&self) -> StepCommand {
-        StepCommand::new("aws-ecs-prerequisites", "/bin/sh").with_args([
-            "-c".to_string(),
-            "command -v aws >/dev/null && command -v docker >/dev/null".to_string(),
-        ])
+        let aws_check = shell_presence_check(self.config.aws_cli_program());
+        let docker_check = shell_presence_check(self.config.docker_program());
+        StepCommand::new("aws-ecs-prerequisites", "/bin/sh")
+            .with_args(["-c".to_string(), format!("{aws_check} && {docker_check}")])
     }
 
     pub fn bootstrap_check(&self, run_context: &RunContext) -> Result<StepCommand, ScenarioError> {
         let task_definition = scenario_file(run_context, self.config.task_definition_path())?;
         Ok(StepCommand::new("aws-ecs-bootstrap", "/bin/sh").with_args([
             "-c".to_string(),
-            format!("test -f {}", shell_quote(&task_definition)),
+            format!("test -f {}", shell_quote_path(&task_definition)),
         ]))
     }
 
@@ -155,30 +178,38 @@ impl AwsEcsExpressScenario {
         ]
     }
 
-    fn terraform_destroy_cleanup(&self) -> CleanupAction {
-        let working_directory = self
+    fn stage_task_definition(&self, run_context: &RunContext) -> Result<PathBuf, ScenarioError> {
+        let source = self
             .config
-            .working_directory()
-            .unwrap_or(self.config.deployment_root());
+            .deployment_root()
+            .join(self.config.task_definition_path());
+        if !source.exists() {
+            return Err(ScenarioError::invalid_configuration(
+                self.name(),
+                format!("task definition does not exist: {}", source.display()),
+            ));
+        }
 
-        CleanupAction::new(
-            "aws-ecs-terraform-destroy",
-            StepCommand::new("terraform-destroy-step", "/bin/sh")
-                .with_args(["-c".to_string(), "terraform destroy -auto-approve".to_string()])
-                .with_current_dir(working_directory),
-        )
-        .recovery_hint(
-            "If cleanup fails, inspect the ECS service and Terraform state before retrying destroy.",
-        )
+        let destination = scenario_file(run_context, self.config.task_definition_path())?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|source_error| {
+                ScenarioError::io(self.name(), "stage task definition", source_error)
+            })?;
+        }
+        fs::copy(&source, &destination).map_err(|source_error| {
+            ScenarioError::io(self.name(), "stage task definition", source_error)
+        })?;
+        Ok(destination)
     }
 
     fn ecs_service_drain_cleanup(&self, cluster_name: &str, service_name: &str) -> CleanupAction {
+        let aws_cli = shell_quote_path(self.config.aws_cli_program());
         CleanupAction::new(
             "aws-ecs-service-drain",
             StepCommand::new("aws-ecs-service-drain-step", "/bin/sh").with_args([
                 "-c".to_string(),
                 format!(
-                    "aws ecs update-service --region {} --cluster {} --service {} --desired-count 0",
+                    "{aws_cli} ecs update-service --region {} --cluster {} --service {} --desired-count 0",
                     shell_quote_literal(self.config.region()),
                     shell_quote_literal(cluster_name),
                     shell_quote_literal(service_name),
@@ -210,13 +241,12 @@ impl Scenario for AwsEcsExpressScenario {
         }
 
         let prerequisite_command = self.prerequisite_check();
+        let _task_definition = self.stage_task_definition(run_context)?;
         let bootstrap_command = self.bootstrap_check(run_context)?;
-        let task_definition = scenario_file(run_context, self.config.task_definition_path())?;
 
         let mut preparation = ScenarioPreparation::new(self.backend_request())
-            .with_cleanup_action(self.terraform_destroy_cleanup().preserve_on_failure(
-                CleanupArtifact::new(&task_definition, "aws-ecs/task-definition.json"),
-            ))
+            .with_preparation_step(prerequisite_command.clone())
+            .with_preparation_step(bootstrap_command.clone())
             .with_metadata("prerequisite_step", prerequisite_command.display_command())
             .with_metadata("bootstrap_step", bootstrap_command.display_command());
 
@@ -267,13 +297,21 @@ impl Scenario for AwsEcsExpressScenario {
     }
 }
 
-fn shell_quote(path: &Path) -> String {
+fn shell_quote_path(path: &Path) -> String {
     let rendered = path.display().to_string();
     format!("'{}'", rendered.replace('\'', r#"'\''"#))
 }
 
 fn shell_quote_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', r#"'\''"#))
+}
+
+fn shell_presence_check(program: &Path) -> String {
+    if program.is_absolute() || program.components().count() > 1 {
+        format!("test -x {}", shell_quote_path(program))
+    } else {
+        format!("command -v {} >/dev/null", program.display())
+    }
 }
 
 fn join_url_path(base_url: &str, path: &str) -> String {
@@ -329,16 +367,15 @@ mod tests {
         let deployment_root = temp_dir.path().join("terraform");
         let run_context =
             RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-ecs-0001"));
+        let task_definition_source = deployment_root.join("app/task-definition.json");
 
-        fs::create_dir_all(&deployment_root)?;
-        run_context.materialize()?;
-        fs::create_dir_all(run_context.work_dir().join("scenarios").join("app"))?;
-        fs::write(
-            run_context
-                .work_dir()
-                .join("scenarios/app/task-definition.json"),
-            "{}",
+        fs::create_dir_all(
+            task_definition_source
+                .parent()
+                .expect("task definition dir"),
         )?;
+        run_context.materialize()?;
+        fs::write(&task_definition_source, "{\"family\":\"dress\"}")?;
 
         let scenario = AwsEcsExpressScenario::new(
             AwsEcsExpressScenarioConfig::new(&deployment_root, "ap-southeast-2", "/health")
@@ -361,10 +398,14 @@ mod tests {
                 .get("AWS_REGION"),
             Some(&"ap-southeast-2".to_string())
         );
-        assert_eq!(preparation.cleanup_actions().len(), 1);
+        assert_eq!(preparation.preparation_steps().len(), 2);
         assert_eq!(
-            preparation.cleanup_actions()[0].name(),
-            "aws-ecs-terraform-destroy"
+            preparation.preparation_steps()[0].name().as_str(),
+            "aws-ecs-prerequisites"
+        );
+        assert_eq!(
+            preparation.preparation_steps()[1].name().as_str(),
+            "aws-ecs-bootstrap"
         );
         assert_eq!(
             preparation.metadata().get("health_path"),
@@ -372,6 +413,15 @@ mod tests {
         );
         assert!(preparation.metadata().contains_key("prerequisite_step"));
         assert!(preparation.metadata().contains_key("bootstrap_step"));
+        assert_eq!(preparation.cleanup_actions().len(), 0);
+        assert_eq!(
+            fs::read_to_string(
+                run_context
+                    .work_dir()
+                    .join("scenarios/app/task-definition.json")
+            )?,
+            "{\"family\":\"dress\"}"
+        );
 
         Ok(())
     }

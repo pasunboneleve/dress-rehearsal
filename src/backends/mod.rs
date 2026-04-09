@@ -2,6 +2,7 @@
 
 pub mod terraform;
 
+use crate::cleanup::CleanupAction;
 use crate::context::RunContext;
 use crate::steps::{StepError, StepRunner};
 use std::collections::BTreeMap;
@@ -156,6 +157,8 @@ pub trait DeploymentBackend {
         runner: &StepRunner,
     ) -> Result<BackendOutputs, BackendError>;
 
+    fn destroy_action(&self, session: &BackendSession) -> CleanupAction;
+
     fn destroy(&self, session: &BackendSession, runner: &StepRunner) -> Result<(), BackendError>;
 }
 
@@ -174,6 +177,11 @@ pub enum BackendError {
         backend_name: String,
         operation: &'static str,
         source: StepError,
+    },
+    OutputFormat {
+        backend_name: String,
+        operation: &'static str,
+        message: String,
     },
 }
 
@@ -207,6 +215,18 @@ impl BackendError {
             source,
         }
     }
+
+    pub fn output_format(
+        backend_name: impl Into<String>,
+        operation: &'static str,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::OutputFormat {
+            backend_name: backend_name.into(),
+            operation,
+            message: message.into(),
+        }
+    }
 }
 
 impl fmt::Display for BackendError {
@@ -232,6 +252,14 @@ impl fmt::Display for BackendError {
                 f,
                 "backend `{backend_name}` step failed during {operation}: {source}"
             ),
+            Self::OutputFormat {
+                backend_name,
+                operation,
+                message,
+            } => write!(
+                f,
+                "backend `{backend_name}` returned invalid output during {operation}: {message}"
+            ),
         }
     }
 }
@@ -242,6 +270,7 @@ impl std::error::Error for BackendError {
             Self::InvalidConfiguration { .. } => None,
             Self::Io { source, .. } => Some(source),
             Self::Step { source, .. } => Some(source),
+            Self::OutputFormat { .. } => None,
         }
     }
 }

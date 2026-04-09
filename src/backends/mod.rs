@@ -56,6 +56,7 @@ pub struct BackendSession {
     backend_name: String,
     deployment_root: PathBuf,
     working_directory: PathBuf,
+    environment: BTreeMap<String, String>,
     backend_work_dir: PathBuf,
     backend_artifacts_dir: PathBuf,
 }
@@ -81,6 +82,7 @@ impl BackendSession {
             backend_name,
             deployment_root: request.deployment_root().to_path_buf(),
             working_directory,
+            environment: request.environment().clone(),
             backend_work_dir,
             backend_artifacts_dir,
         }
@@ -96,6 +98,10 @@ impl BackendSession {
 
     pub fn working_directory(&self) -> &Path {
         &self.working_directory
+    }
+
+    pub fn environment(&self) -> &BTreeMap<String, String> {
+        &self.environment
     }
 
     pub fn backend_work_dir(&self) -> &Path {

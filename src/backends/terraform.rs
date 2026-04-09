@@ -136,9 +136,13 @@ impl TerraformBackend {
         session: &BackendSession,
         subcommand: &'static str,
     ) -> StepCommand {
-        StepCommand::new(step_name, self.config.binary().program())
+        let mut command = StepCommand::new(step_name, self.config.binary().program())
             .arg(subcommand)
-            .with_current_dir(session.working_directory())
+            .with_current_dir(session.working_directory());
+        for (key, value) in session.environment() {
+            command = command.with_env(key.clone(), value.clone());
+        }
+        command
     }
 
     fn validate_request(&self, request: &BackendRequest) -> Result<(), BackendError> {
@@ -307,6 +311,28 @@ mod tests {
                 "-auto-approve".to_string(),
                 "-var-file=env/dev.tfvars".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn applies_backend_request_environment_to_terraform_commands() {
+        let backend = TerraformBackend::new(TerraformBackendConfig::default());
+        let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-2000"));
+        let request = BackendRequest::new("/tmp/scenario")
+            .with_working_directory("/tmp/scenario")
+            .with_env("AWS_REGION", "ap-southeast-2")
+            .with_env("TF_IN_AUTOMATION", "1");
+        let session = BackendSession::new(&run_context, "terraform", &request);
+
+        let command = backend.apply_command(&session);
+
+        assert_eq!(
+            command.environment().get("AWS_REGION"),
+            Some(&"ap-southeast-2".to_string())
+        );
+        assert_eq!(
+            command.environment().get("TF_IN_AUTOMATION"),
+            Some(&"1".to_string())
         );
     }
 

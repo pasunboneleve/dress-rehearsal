@@ -571,6 +571,7 @@ pub fn execute_http_verification(
             http_request_command(plan.request_step(), &attempt_artifacts, attempt_number);
         match runner.run_command(&request_command) {
             Ok(outcome) => {
+                last_step_error = None;
                 fs::write(attempt_artifacts.stdout_log_path(), outcome.stdout()).map_err(
                     |source| VerificationRunError::ResponseRead {
                         operation: "write verification stdout log",
@@ -592,7 +593,10 @@ pub fn execute_http_verification(
                 }
                 last_report = Some(report);
             }
-            Err(source) => last_step_error = Some(source),
+            Err(source) => {
+                last_report = None;
+                last_step_error = Some(source);
+            }
         }
 
         if attempt_index + 1 < attempt_count {
@@ -745,6 +749,9 @@ fn preserve_failure_artifacts(
             FailureArtifactSource::File(path) => path.clone(),
             FailureArtifactSource::StepLog { .. } => continue,
         };
+        if !source.exists() {
+            continue;
+        }
 
         run_context
             .preserve_file(&source, artifact.destination())

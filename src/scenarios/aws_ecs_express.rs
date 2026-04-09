@@ -202,6 +202,17 @@ impl AwsEcsExpressScenario {
         Ok(destination)
     }
 
+    fn task_definition_preservation_cleanup(&self, staged_task_definition: &Path) -> CleanupAction {
+        CleanupAction::new(
+            "aws-ecs-preserve-task-definition",
+            StepCommand::new("aws-ecs-preserve-task-definition-step", "/bin/true"),
+        )
+        .preserve_on_failure(crate::cleanup::CleanupArtifact::new(
+            staged_task_definition,
+            "aws-ecs/task-definition.json",
+        ))
+    }
+
     fn ecs_service_drain_cleanup(&self, cluster_name: &str, service_name: &str) -> CleanupAction {
         let aws_cli = shell_quote_path(self.config.aws_cli_program());
         CleanupAction::new(
@@ -241,12 +252,13 @@ impl Scenario for AwsEcsExpressScenario {
         }
 
         let prerequisite_command = self.prerequisite_check();
-        let _task_definition = self.stage_task_definition(run_context)?;
+        let task_definition = self.stage_task_definition(run_context)?;
         let bootstrap_command = self.bootstrap_check(run_context)?;
 
         let mut preparation = ScenarioPreparation::new(self.backend_request())
             .with_preparation_step(prerequisite_command.clone())
             .with_preparation_step(bootstrap_command.clone())
+            .with_cleanup_action(self.task_definition_preservation_cleanup(&task_definition))
             .with_metadata("prerequisite_step", prerequisite_command.display_command())
             .with_metadata("bootstrap_step", bootstrap_command.display_command());
 
@@ -310,7 +322,7 @@ fn shell_presence_check(program: &Path) -> String {
     if program.is_absolute() || program.components().count() > 1 {
         format!("test -x {}", shell_quote_path(program))
     } else {
-        format!("command -v {} >/dev/null", program.display())
+        format!("command -v {} >/dev/null", shell_quote_path(program))
     }
 }
 
@@ -413,7 +425,11 @@ mod tests {
         );
         assert!(preparation.metadata().contains_key("prerequisite_step"));
         assert!(preparation.metadata().contains_key("bootstrap_step"));
-        assert_eq!(preparation.cleanup_actions().len(), 0);
+        assert_eq!(preparation.cleanup_actions().len(), 1);
+        assert_eq!(
+            preparation.cleanup_actions()[0].name(),
+            "aws-ecs-preserve-task-definition"
+        );
         assert_eq!(
             fs::read_to_string(
                 run_context

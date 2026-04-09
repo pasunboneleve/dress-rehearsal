@@ -594,14 +594,6 @@ mod tests {
                 ]),
             )
         }
-
-        fn destroy(
-            &self,
-            _session: &BackendSession,
-            _runner: &StepRunner,
-        ) -> Result<(), BackendError> {
-            Ok(())
-        }
     }
 
     struct FakeScenario {

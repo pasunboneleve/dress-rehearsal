@@ -238,14 +238,6 @@ impl DeploymentBackend for TerraformBackend {
             "If destroy fails, inspect the terraform state and residual cloud resources before retrying cleanup.",
         )
     }
-
-    fn destroy(&self, session: &BackendSession, runner: &StepRunner) -> Result<(), BackendError> {
-        let destroy_command = self.destroy_command(session);
-        runner
-            .run_command(&destroy_command)
-            .map_err(|source| BackendError::step(self.name(), "destroy", source))?;
-        Ok(())
-    }
 }
 
 fn render_output_value(value: &Value) -> String {
@@ -394,6 +386,28 @@ mod tests {
         assert_eq!(outputs.get("cluster_name"), Some("dress-cluster"));
         assert_eq!(outputs.get("desired_count"), Some("2"));
         assert_eq!(outputs.get("service_tags"), Some(r#"{"service":"dress"}"#));
+    }
+
+    #[test]
+    fn destroy_action_reuses_destroy_command_shape() {
+        let backend = TerraformBackend::new(
+            TerraformBackendConfig::default()
+                .with_binary(TerraformBinary::OpenTofu)
+                .with_var_file("env/dev.tfvars"),
+        );
+        let session = backend_session("run-fixed-2004");
+
+        let action = backend.destroy_action(&session);
+
+        assert_eq!(action.name(), "terraform-destroy");
+        assert_eq!(
+            action.command().args(),
+            &[
+                "destroy".to_string(),
+                "-auto-approve".to_string(),
+                "-var-file=env/dev.tfvars".to_string()
+            ]
+        );
     }
 
     fn backend_session(run_id: &str) -> BackendSession {

@@ -158,8 +158,6 @@ pub trait DeploymentBackend {
     ) -> Result<BackendOutputs, BackendError>;
 
     fn destroy_action(&self, session: &BackendSession) -> CleanupAction;
-
-    fn destroy(&self, session: &BackendSession, runner: &StepRunner) -> Result<(), BackendError>;
 }
 
 #[derive(Debug)]

@@ -2,7 +2,9 @@ use crate::backends::terraform::{TerraformBackend, TerraformBackendConfig, Terra
 use crate::core::{RehearsalOutcome, rehearse};
 use crate::scenarios::aws_ecs_express::{AwsEcsExpressScenario, AwsEcsExpressScenarioConfig};
 use crate::steps::StepRunner;
+use owo_colors::OwoColorize;
 use std::env;
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
 
@@ -10,7 +12,7 @@ pub fn run() {
     match run_inner(env::args().collect()) {
         Ok(exit_code) => process::exit(exit_code),
         Err(message) => {
-            eprintln!("{message}");
+            dress_log(&message);
             process::exit(2);
         }
     }
@@ -23,10 +25,7 @@ fn run_inner(args: Vec<String>) -> Result<i32, String> {
             print_usage();
             Ok(0)
         }
-        Some(other) => Err(format!(
-            "dress: unknown command `{other}`\n\n{}",
-            usage_text()
-        )),
+        Some(other) => Err(format!("unknown command `{other}`\n\n{}", usage_text())),
     }
 }
 
@@ -36,47 +35,44 @@ fn run_smoke_aws_ecs() -> Result<i32, String> {
     let scenario = AwsEcsExpressScenario::new(config.scenario_config);
     let runner = StepRunner::new();
 
-    eprintln!("dress: starting aws-ecs-express rehearsal");
-    eprintln!("dress: runs root {}", config.runs_root.display());
-    eprintln!(
-        "dress: deployment root {}",
-        config.deployment_root.display()
-    );
+    dress_log("starting aws-ecs-express rehearsal");
+    dress_log(format!("runs root {}", config.runs_root.display()));
+    dress_log(format!("deployment root {}", config.deployment_root.display()));
 
     match rehearse(&config.runs_root, &backend, &scenario, &runner) {
         RehearsalOutcome::Succeeded(success) => {
-            eprintln!("dress: run id {}", success.run_context().run_id());
-            eprintln!(
-                "dress: run directory {}",
+            dress_log(format!("run id {}", success.run_context().run_id()));
+            dress_log(format!(
+                "run directory {}",
                 success.run_context().root_dir().display()
-            );
-            eprintln!("dress: success");
+            ));
+            dress_log("success");
             if let Some(summary_path) = success.summary_path() {
-                eprintln!("dress: summary {}", summary_path.display());
+                dress_log(format!("summary {}", summary_path.display()));
             }
             if let Some(step_log_path) = success.step_log_path() {
-                eprintln!("dress: step log {}", step_log_path.display());
+                dress_log(format!("step log {}", step_log_path.display()));
             }
             Ok(0)
         }
         RehearsalOutcome::Failed(failure) => {
-            eprintln!("dress: run id {}", failure.run_context().run_id());
-            eprintln!(
-                "dress: run directory {}",
+            dress_log(format!("run id {}", failure.run_context().run_id()));
+            dress_log(format!(
+                "run directory {}",
                 failure.run_context().root_dir().display()
-            );
-            eprintln!("dress: failure during {}", failure.stage());
-            eprintln!("dress: error {}", failure.error());
+            ));
+            dress_log(format!("failure during {}", failure.stage()));
+            dress_log(format!("error {}", failure.error()));
             if let Some(summary_path) = failure.summary_path() {
-                eprintln!("dress: summary {}", summary_path.display());
+                dress_log(format!("summary {}", summary_path.display()));
             }
             if let Some(step_log_path) = failure.step_log_path() {
-                eprintln!("dress: step log {}", step_log_path.display());
+                dress_log(format!("step log {}", step_log_path.display()));
             }
-            eprintln!(
-                "dress: preserved artifacts {}",
+            dress_log(format!(
+                "preserved artifacts {}",
                 failure.run_context().preserved_dir().display()
-            );
+            ));
             Ok(1)
         }
     }
@@ -123,7 +119,7 @@ fn terraform_binary_from_env() -> Result<TerraformBinary, String> {
         Some(value) if value == "terraform" => Ok(TerraformBinary::Terraform),
         Some(value) if value == "tofu" => Ok(TerraformBinary::OpenTofu),
         Some(value) if value.trim().is_empty() => {
-            Err("dress: `DRESS_TERRAFORM_BINARY` must not be empty".to_string())
+            Err("`DRESS_TERRAFORM_BINARY` must not be empty".to_string())
         }
         Some(value) => Ok(TerraformBinary::Custom(PathBuf::from(value))),
         None => Ok(TerraformBinary::Terraform),
@@ -135,7 +131,7 @@ fn env_path_list(key: &str) -> Result<Vec<PathBuf>, String> {
         Some(value) => env::split_paths(&value)
             .map(|path| {
                 if path.as_os_str().is_empty() {
-                    Err(format!("dress: `{key}` contains an empty path entry"))
+                    Err(format!("`{key}` contains an empty path entry"))
                 } else {
                     Ok(path)
                 }
@@ -148,9 +144,7 @@ fn env_path_list(key: &str) -> Result<Vec<PathBuf>, String> {
 fn required_env(key: &str) -> Result<String, String> {
     match optional_env(key) {
         Some(value) => Ok(value),
-        None => Err(format!(
-            "dress: missing required environment variable `{key}`"
-        )),
+        None => Err(format!("missing required environment variable `{key}`")),
     }
 }
 
@@ -159,8 +153,7 @@ fn optional_env(key: &str) -> Option<String> {
 }
 
 fn required_env_path(key: &str) -> Result<PathBuf, String> {
-    optional_env_path(key)
-        .ok_or_else(|| format!("dress: missing required environment variable `{key}`"))
+    optional_env_path(key).ok_or_else(|| format!("missing required environment variable `{key}`"))
 }
 
 fn optional_env_path(key: &str) -> Option<PathBuf> {
@@ -168,7 +161,21 @@ fn optional_env_path(key: &str) -> Option<PathBuf> {
 }
 
 fn print_usage() {
-    eprintln!("{}", usage_text());
+    dress_log(usage_text());
+}
+
+fn dress_log(message: impl AsRef<str>) {
+    for line in message.as_ref().lines() {
+        eprintln!("{} {}", dress_prefix(), line);
+    }
+}
+
+fn dress_prefix() -> String {
+    if io::stderr().is_terminal() {
+        format!("{}", "[dress]".bright_cyan().dimmed())
+    } else {
+        "[dress]".to_string()
+    }
 }
 
 fn usage_text() -> &'static str {

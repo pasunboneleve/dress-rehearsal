@@ -1,13 +1,15 @@
 //! StepRunner and step execution semantics belong here.
 
+use owo_colors::OwoColorize;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 /// Stable name for one orchestration step.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
@@ -213,6 +215,10 @@ impl StepRunner {
         command: &StepCommand,
         sink: &mut dyn StepEventSink,
     ) -> Result<StepOutcome, StepError> {
+        let log_style = StepLogStyle::default();
+        let started_at = Instant::now();
+        log_style.print_step_started(command.name());
+
         let started_event = StepEvent::Started {
             step_name: command.name().clone(),
             command: command.display_command(),
@@ -247,6 +253,13 @@ impl StepRunner {
                 });
                 self.record_event(&finished_event);
                 sink.on_event(finished_event);
+                log_style.print_step_finished(
+                    command.name(),
+                    &StepTerminalStatus::SpawnError {
+                        message: error.to_string(),
+                    },
+                    started_at.elapsed(),
+                );
                 return Err(error);
             }
         };
@@ -288,6 +301,13 @@ impl StepRunner {
                 });
                 self.record_event(&finished_event);
                 sink.on_event(finished_event);
+                log_style.print_step_finished(
+                    command.name(),
+                    &StepTerminalStatus::SpawnError {
+                        message: error.to_string(),
+                    },
+                    started_at.elapsed(),
+                );
                 return Err(error);
             }
         };
@@ -337,6 +357,11 @@ impl StepRunner {
             });
             self.record_event(&finished_event);
             sink.on_event(finished_event);
+            log_style.print_step_finished(
+                outcome.step_name(),
+                &StepTerminalStatus::Succeeded,
+                started_at.elapsed(),
+            );
             Ok(outcome)
         } else {
             let finished_event = StepEvent::Finished {
@@ -358,6 +383,13 @@ impl StepRunner {
             });
             self.record_event(&finished_event);
             sink.on_event(finished_event);
+            log_style.print_step_finished(
+                outcome.step_name(),
+                &StepTerminalStatus::Failed {
+                    exit_code: outcome.exit_code(),
+                },
+                started_at.elapsed(),
+            );
             Err(StepError::Failed(outcome))
         }
     }
@@ -647,10 +679,113 @@ fn slugify_step_name(value: &str) -> String {
     }
 }
 
+struct StepLogStyle {
+    enable_color: bool,
+}
+
+impl Default for StepLogStyle {
+    fn default() -> Self {
+        Self {
+            enable_color: io::stderr().is_terminal(),
+        }
+    }
+}
+
+impl StepLogStyle {
+    fn print_step_started(&self, step_name: &StepName) {
+        eprintln!();
+        eprintln!(
+            "{} {} {}",
+            self.render_dress_prefix(),
+            self.render_step_prefix(None),
+            step_name.as_str()
+        );
+    }
+
+    fn print_step_finished(
+        &self,
+        step_name: &StepName,
+        status: &StepTerminalStatus,
+        elapsed: Duration,
+    ) {
+        eprintln!(
+            "{} {} {} {}",
+            self.render_dress_prefix(),
+            self.render_step_prefix(Some(status)),
+            step_name.as_str(),
+            self.render_duration(elapsed)
+        );
+        if status.is_failed() {
+            eprintln!(
+                "{} {}",
+                self.render_dress_prefix(),
+                self.render_step_failed_line(step_name)
+            );
+        }
+    }
+
+    fn render_dress_prefix(&self) -> String {
+        if self.enable_color {
+            format!("{}", "[dress]".bright_cyan().dimmed())
+        } else {
+            "[dress]".to_string()
+        }
+    }
+
+    fn render_step_prefix(&self, status: Option<&StepTerminalStatus>) -> String {
+        let label = "==> Step:";
+        if !self.enable_color {
+            return label.to_string();
+        }
+
+        match status {
+            Some(StepTerminalStatus::Succeeded) => format!("{}", label.green().bold()),
+            Some(status) if status.is_failed() => format!("{}", label.red().bold()),
+            _ => label.to_string(),
+        }
+    }
+
+    fn render_step_failed_line(&self, step_name: &StepName) -> String {
+        let line = format!("==> Step failed: {}", step_name.as_str());
+        if self.enable_color {
+            format!("{}", line.red().bold())
+        } else {
+            line
+        }
+    }
+
+    fn render_duration(&self, elapsed: Duration) -> String {
+        let rendered = format!("(completed in {})", human_duration(elapsed));
+        if self.enable_color {
+            format!("{}", rendered.yellow())
+        } else {
+            rendered
+        }
+    }
+}
+
+fn human_duration(duration: Duration) -> String {
+    if duration.as_secs() >= 60 {
+        let total_seconds = duration.as_secs();
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        format!("{minutes}m{seconds:02}s")
+    } else {
+        let seconds = duration.as_secs_f64();
+        if seconds >= 1.0 {
+            format!("{seconds:.1}s")
+        } else {
+            format!("{seconds:.2}s")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{StepCommand, StepError, StepEvent, StepEventSink, StepRunner, StepTerminalStatus};
+    use super::human_duration;
     use std::env;
+    use std::time::Duration;
 
     #[derive(Default)]
     struct RecordingSink {
@@ -761,6 +896,17 @@ mod tests {
                 .contains(&env::temp_dir().display().to_string())
         );
         assert_eq!(runner.recorded_events().len(), 2);
+    }
+
+    #[test]
+    fn formats_short_human_durations() {
+        assert_eq!(human_duration(Duration::from_millis(1200)), "1.2s");
+        assert_eq!(human_duration(Duration::from_secs(12)), "12.0s");
+    }
+
+    #[test]
+    fn formats_minute_scale_human_durations() {
+        assert_eq!(human_duration(Duration::from_secs(194)), "3m14s");
     }
 
     fn shell_command(script: &str) -> StepCommand {

@@ -992,13 +992,17 @@ mod tests {
                 let cleanup_report = failure
                     .cleanup_report()
                     .expect("deploy failures should include cleanup");
+                // Registration order crosses the backend boundary in this sequence:
+                // scenario cleanup during prepare, then backend destroy after initialize.
+                // Reverse cleanup therefore runs backend destroy first.
+                let expected_reverse_cleanup_order = vec!["backend-destroy", "scenario-cleanup"];
                 assert_eq!(
                     cleanup_report
                         .results()
                         .iter()
                         .map(|result| result.action_name())
                         .collect::<Vec<_>>(),
-                    vec!["backend-destroy", "scenario-cleanup"]
+                    expected_reverse_cleanup_order
                 );
                 assert_eq!(
                     fs::read_to_string(cleanup_log_path)?,

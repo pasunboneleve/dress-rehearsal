@@ -123,7 +123,7 @@ impl SmokeEnvironment {
 }
 
 fn load_smoke_config(environment: &SmokeEnvironment) -> Result<SmokeConfig, String> {
-    let deployment_root = required_env_path(environment, "DRESS_DEPLOYMENT_ROOT")?;
+    let deployment_root = deployment_root_from_env(environment)?;
     let runs_root = optional_env_path(environment, "DRESS_RUNS_ROOT")
         .unwrap_or_else(|| deployment_root.join(".dress-runs"));
     let working_directory = optional_env_path(environment, "DRESS_WORKING_DIRECTORY");
@@ -186,13 +186,16 @@ fn optional_env(environment: &SmokeEnvironment, key: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn required_env_path(environment: &SmokeEnvironment, key: &str) -> Result<PathBuf, String> {
-    optional_env_path(environment, key)
-        .ok_or_else(|| format!("missing required environment variable `{key}`"))
-}
-
 fn optional_env_path(environment: &SmokeEnvironment, key: &str) -> Option<PathBuf> {
     optional_env(environment, key).map(PathBuf::from)
+}
+
+fn deployment_root_from_env(environment: &SmokeEnvironment) -> Result<PathBuf, String> {
+    match optional_env_path(environment, "DRESS_DEPLOYMENT_ROOT") {
+        Some(path) => Ok(path),
+        None => env::current_dir()
+            .map_err(|source| format!("failed to determine current directory: {source}")),
+    }
 }
 
 fn print_help() {
@@ -259,7 +262,7 @@ fn help_text() -> String {
     let _ = writeln!(text, "What happens when you run `dress`:");
     let _ = writeln!(
         text,
-        "- loads the backend rehearsal configuration from explicit environment variables"
+        "- loads the backend rehearsal configuration from explicit environment variables and the current working directory"
     );
     let _ = writeln!(
         text,
@@ -277,7 +280,7 @@ fn help_text() -> String {
     let _ = writeln!(text, "Minimal requirements:");
     let _ = writeln!(
         text,
-        "- `DRESS_DEPLOYMENT_ROOT` points at a backend deployment directory"
+        "- run `dress` from a backend deployment directory, or set `DRESS_DEPLOYMENT_ROOT` explicitly"
     );
     let _ = writeln!(
         text,
@@ -289,7 +292,11 @@ fn help_text() -> String {
     );
     let _ = writeln!(text);
     let _ = writeln!(text, "Important environment variables:");
-    let _ = writeln!(text, "- required: `DRESS_DEPLOYMENT_ROOT`");
+    let _ = writeln!(text, "- optional override: `DRESS_DEPLOYMENT_ROOT`");
+    let _ = writeln!(
+        text,
+        "  when unset, `dress` uses the current working directory as the deployment root"
+    );
     let _ = writeln!(text, "- optional: `DRESS_RUNS_ROOT`");
     let _ = writeln!(text, "- optional: `DRESS_WORKING_DIRECTORY`");
     let _ = writeln!(
@@ -318,6 +325,7 @@ mod tests {
         version_text,
     };
     use crate::backends::terraform::TerraformBinary;
+    use std::env;
     use std::path::PathBuf;
 
     #[test]
@@ -346,10 +354,10 @@ mod tests {
 
     #[test]
     fn default_invocation_runs_backend_flow() {
-        let error =
-            run_inner(vec!["dress".to_string()]).expect_err("default run should require config");
+        let exit_code =
+            run_inner(vec!["dress".to_string()]).expect("default invocation should dispatch");
 
-        assert!(error.contains("DRESS_DEPLOYMENT_ROOT"));
+        assert!(matches!(exit_code, 0 | 1));
     }
 
     #[test]
@@ -394,6 +402,28 @@ mod tests {
     }
 
     #[test]
+    fn load_smoke_config_falls_back_to_current_directory() {
+        let environment = SmokeEnvironment::default();
+        let current_dir = env::current_dir().expect("current directory should resolve");
+
+        let config =
+            load_smoke_config(&environment).expect("config should use current directory fallback");
+
+        assert_eq!(config.deployment_root, current_dir);
+        assert_eq!(config.runs_root, current_dir.join(".dress-runs"));
+    }
+
+    #[test]
+    fn explicit_deployment_root_overrides_current_directory() {
+        let environment =
+            SmokeEnvironment::default().with_var("DRESS_DEPLOYMENT_ROOT", "/tmp/deploy");
+
+        let config = load_smoke_config(&environment).expect("explicit deployment root should win");
+
+        assert_eq!(config.deployment_root, PathBuf::from("/tmp/deploy"));
+    }
+
+    #[test]
     fn help_text_describes_current_scope_honestly() {
         let help = help_text();
 
@@ -402,6 +432,7 @@ mod tests {
         assert!(help.contains("does not model provider services"));
         assert!(help.contains("`dress` runs the current backend rehearsal flow"));
         assert!(help.contains("`DRESS_DEPLOYMENT_ROOT`"));
+        assert!(help.contains("current working directory as the deployment root"));
     }
 
     #[test]

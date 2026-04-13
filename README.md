@@ -93,7 +93,13 @@ dress --version
 dress version
 ```
 
-Minimum environment:
+Default behavior:
+
+`dress` uses the current working directory as the deployment root when
+`DRESS_DEPLOYMENT_ROOT` is not set. So if you run it from the root of your HCL
+code, you do not need to export that variable.
+
+Explicit deployment root override:
 
 ```bash
 export DRESS_DEPLOYMENT_ROOT=/path/to/deployment/root

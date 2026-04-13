@@ -9,3 +9,4 @@
 {"id":"int-15312fd6","kind":"field_change","created_at":"2026-04-13T07:25:20.655673645Z","actor":"Daniel Vianna","issue_id":"dress-rehearsal-8az.1","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-1e892f8a","kind":"field_change","created_at":"2026-04-13T07:25:20.999696264Z","actor":"Daniel Vianna","issue_id":"dress-rehearsal-8az.2","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-5a18b744","kind":"field_change","created_at":"2026-04-13T07:25:21.373889703Z","actor":"Daniel Vianna","issue_id":"dress-rehearsal-8az.3","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-69575e84","kind":"field_change","created_at":"2026-04-13T07:44:26.455047963Z","actor":"Daniel Vianna","issue_id":"dress-rehearsal-pbj","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}

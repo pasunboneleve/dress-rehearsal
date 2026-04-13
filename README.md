@@ -24,10 +24,12 @@ evidence when things fail.
 <p align="center" style="margin: 0 0 1.25rem 0;">
     <sub>Practice the failure.</sub>
 </p>
+<br>
 
-The metaphor is literal. A dress rehearsal is the full run before the real
-performance. This tool is for rehearsing infrastructure changes the same way:
-with the real sequence, clear boundaries, and visible failure handling.
+A dress rehearsal is the full run before the real performance.
+
+This tool does the same for infrastructure:\
+runs it end-to-end, observes what breaks, and tears it down safely.
 
 Current scope:
 - establish architecture and execution boundaries

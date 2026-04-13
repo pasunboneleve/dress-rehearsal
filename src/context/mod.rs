@@ -187,35 +187,10 @@ fn join_relative_path(base: &Path, relative_path: impl AsRef<Path>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{RunContext, RunId};
-    use std::env;
+    use crate::test_support::TestDir;
     use std::fs;
     use std::io;
     use std::path::PathBuf;
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(name: &str) -> io::Result<Self> {
-            let path = env::temp_dir().join(format!(
-                "dress-rehearsal-tests-{name}-{}",
-                RunId::generate().as_str()
-            ));
-            fs::create_dir_all(&path)?;
-            Ok(Self { path })
-        }
-
-        fn path(&self) -> &PathBuf {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
 
     #[test]
     fn derives_paths_from_run_id() {
@@ -246,7 +221,7 @@ mod tests {
 
     #[test]
     fn materialize_creates_layout_and_metadata() -> io::Result<()> {
-        let temp_dir = TestDir::new("materialize")?;
+        let temp_dir = TestDir::new("tests", "materialize")?;
         let context = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-0002"));
 
         context.materialize()?;
@@ -264,7 +239,7 @@ mod tests {
 
     #[test]
     fn preserves_failure_artifacts_under_preserved_dir() -> io::Result<()> {
-        let temp_dir = TestDir::new("preserve-file")?;
+        let temp_dir = TestDir::new("tests", "preserve-file")?;
         let context = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-0003"));
         let source = temp_dir.path().join("stderr.log");
 
@@ -293,7 +268,7 @@ mod tests {
 
     #[test]
     fn run_contexts_materialize_into_disjoint_run_local_directories() -> io::Result<()> {
-        let temp_dir = TestDir::new("run-isolation")?;
+        let temp_dir = TestDir::new("tests", "run-isolation")?;
         let first = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-0008"));
         let second = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-0009"));
 

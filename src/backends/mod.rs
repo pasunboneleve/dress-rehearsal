@@ -283,6 +283,7 @@ impl std::error::Error for BackendError {
 mod tests {
     use super::{BackendOutputs, BackendRequest, BackendSession};
     use crate::context::{RunContext, RunId};
+    use crate::test_support::TestDir;
     use std::fs;
     use std::io;
     use std::path::PathBuf;
@@ -357,7 +358,7 @@ mod tests {
 
     #[test]
     fn backend_sessions_are_isolated_per_run_context() -> io::Result<()> {
-        let runs_root = TestDir::new("backend-isolation")?;
+        let runs_root = TestDir::new("backend-tests", "backend-isolation")?;
         let first_context = RunContext::with_run_id(runs_root.path(), RunId::new("run-fixed-1003"));
         let second_context =
             RunContext::with_run_id(runs_root.path(), RunId::new("run-fixed-1004"));
@@ -412,30 +413,5 @@ mod tests {
         );
 
         Ok(())
-    }
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(name: &str) -> io::Result<Self> {
-            let path = std::env::temp_dir().join(format!(
-                "dress-rehearsal-backend-tests-{name}-{}",
-                RunId::generate().as_str()
-            ));
-            fs::create_dir_all(&path)?;
-            Ok(Self { path })
-        }
-
-        fn path(&self) -> &PathBuf {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
     }
 }

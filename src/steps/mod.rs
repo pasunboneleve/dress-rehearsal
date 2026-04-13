@@ -320,15 +320,21 @@ impl StepRunner {
             .stderr
             .take()
             .expect("child stderr should be available when piped");
-        let stdout_handle = spawn_stream_tee(stdout, artifact_files.stdout_file, StreamTarget::Stdout);
-        let stderr_handle = spawn_stream_tee(stderr, artifact_files.stderr_file, StreamTarget::Stderr);
+        let stdout_handle =
+            spawn_stream_tee(stdout, artifact_files.stdout_file, StreamTarget::Stdout);
+        let stderr_handle =
+            spawn_stream_tee(stderr, artifact_files.stderr_file, StreamTarget::Stderr);
         let exit_status = process.wait().map_err(|source| StepError::Spawn {
             step_name: command.name().clone(),
             command: command.display_command(),
             source,
         })?;
-        let stdout = stdout_handle.join().expect("stdout tee thread should not panic");
-        let stderr = stderr_handle.join().expect("stderr tee thread should not panic");
+        let stdout = stdout_handle
+            .join()
+            .expect("stdout tee thread should not panic");
+        let stderr = stderr_handle
+            .join()
+            .expect("stderr tee thread should not panic");
         let stdout = stdout.map_err(|source| StepError::Spawn {
             step_name: command.name().clone(),
             command: command.display_command(),
@@ -782,8 +788,8 @@ fn human_duration(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{StepCommand, StepError, StepEvent, StepEventSink, StepRunner, StepTerminalStatus};
     use super::human_duration;
+    use super::{StepCommand, StepError, StepEvent, StepEventSink, StepRunner, StepTerminalStatus};
     use std::env;
     use std::time::Duration;
 

@@ -1,5 +1,8 @@
 # dress-rehearsal
 
+[![Linux CI](https://github.com/pasunboneleve/dress-rehearsal/actions/workflows/linux-ci.yml/badge.svg)](https://github.com/pasunboneleve/dress-rehearsal/actions/workflows/linux-ci.yml)
+[![macOS CI](https://github.com/pasunboneleve/dress-rehearsal/actions/workflows/macos-ci.yml/badge.svg)](https://github.com/pasunboneleve/dress-rehearsal/actions/workflows/macos-ci.yml)
+
 `dress` is a Rust-based infrastructure integration harness.
 
 Most infrastructure changes are never rehearsed end-to-end before they are
@@ -45,6 +48,23 @@ Not implemented yet:
 - broad backend coverage
 - multiple scenario families
 - application-level verification
+
+## Install
+
+Install the latest published `main` branch directly from GitHub:
+
+```bash
+cargo install --git https://github.com/pasunboneleve/dress-rehearsal.git
+```
+
+Tagged releases publish prebuilt archives for:
+
+- `x86_64-unknown-linux-gnu`
+- `aarch64-apple-darwin`
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 See [docs/architecture.md](/home/dmvianna/src/projects/dress-rehearsal/docs/architecture.md) for the initial shape.
 See [docs/phases.md](/home/dmvianna/src/projects/dress-rehearsal/docs/phases.md) for the ordered implementation plan.

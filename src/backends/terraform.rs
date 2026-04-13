@@ -329,15 +329,15 @@ mod tests {
         let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-2000"));
         let request = BackendRequest::new("/tmp/scenario")
             .with_working_directory("/tmp/scenario")
-            .with_env("AWS_REGION", "ap-southeast-2")
+            .with_env("BACKEND_WORKSPACE", "preview")
             .with_env("TF_IN_AUTOMATION", "1");
         let session = BackendSession::new(&run_context, "terraform", &request);
 
         let command = backend.apply_command(&session);
 
         assert_eq!(
-            command.environment().get("AWS_REGION"),
-            Some(&"ap-southeast-2".to_string())
+            command.environment().get("BACKEND_WORKSPACE"),
+            Some(&"preview".to_string())
         );
         assert_eq!(
             command.environment().get("TF_IN_AUTOMATION"),

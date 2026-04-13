@@ -338,7 +338,7 @@ mod tests {
     fn request_keeps_generic_environment_inputs() {
         let request = BackendRequest::new("/tmp/scenario")
             .with_working_directory("/tmp/scenario/work")
-            .with_env("AWS_REGION", "ap-southeast-2")
+            .with_env("BACKEND_WORKSPACE", "preview")
             .with_env("STACK_NAME", "dress-preview");
 
         assert_eq!(request.deployment_root(), PathBuf::from("/tmp/scenario"));
@@ -347,8 +347,8 @@ mod tests {
             Some(PathBuf::from("/tmp/scenario/work").as_path())
         );
         assert_eq!(
-            request.environment().get("AWS_REGION"),
-            Some(&"ap-southeast-2".to_string())
+            request.environment().get("BACKEND_WORKSPACE"),
+            Some(&"preview".to_string())
         );
         assert_eq!(
             request.environment().get("STACK_NAME"),

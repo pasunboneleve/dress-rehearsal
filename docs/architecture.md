@@ -210,13 +210,15 @@ Execution path:
 
 ### One scenario family
 
-- Current limitation: the runtime still contains a legacy provider-service-aware
-  scenario layer, even though the intended design is provider-agnostic.
-- Justification: this is explicit design debt, not endorsed scope. It is being
-  tracked for removal while preserving the backend-tool rehearsal core.
-- Future extraction point: either remove the abstraction entirely or narrow it
-  to generic backend preparation and output handling with no provider-service
-  vocabulary.
+- Current limitation: there is still only one generic runtime shape around the
+  backend tool, so the abstraction has not yet been proven across materially
+  different backend-input or output-discovery needs.
+- Justification: one narrow, provider-agnostic path is enough to stabilize the
+  orchestration boundary before deciding whether the abstraction should broaden
+  or collapse further.
+- Future extraction point: only broaden the abstraction if a second real backend
+  tool or generic rehearsal mode needs different preparation or discovery
+  behavior.
 
 ### Verification stays observational
 

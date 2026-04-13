@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 
-exec cargo run -- smoke-aws-ecs
+exec cargo run -- smoke-backend

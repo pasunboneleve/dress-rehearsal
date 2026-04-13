@@ -16,13 +16,13 @@ evidence when things fail.
     <img
         src="docs/static/craddle-will-rock-rehearsal-1937.jpg"
         alt="The Cradle Will Rock rehearsal, 1937"
-        style="width:58.5%;"
+        style="width:100%;"
         />
   </a>
 </p>
 
 <p align="center" style="margin: 0 0 1.25rem 0;">
-    <sub>No audience. No stakes. Full run.</sub>
+    <sub>Practice the failure.</sub>
 </p>
 
 The metaphor is literal. A dress rehearsal is the full run before the real

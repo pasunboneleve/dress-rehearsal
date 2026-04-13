@@ -180,3 +180,56 @@ Execution path:
   path.
 - CI usability matters: step names, live process output, and failure summaries
   should remain clear in non-interactive environments.
+
+## Current Narrow Assumptions
+
+### POSIX process model only
+
+- Current limitation: step execution and test fixtures assume POSIX tools such
+  as `/bin/sh`, `printf`, and standard filesystem semantics. Windows is not a
+  supported runtime target today.
+- Justification: Linux and macOS are the only supported release targets, and a
+  POSIX-first execution model keeps early failure artifacts and shell commands
+  easy to inspect.
+- Future extraction point: introduce a platform-aware command construction
+  boundary only when a real non-POSIX target is required.
+
+### One backend family
+
+- Current limitation: `DeploymentBackend` currently has one concrete family,
+  Terraform/OpenTofu.
+- Justification: the first backend exists to prove the apply/destroy lifecycle
+  boundary before broadening the configuration surface.
+- Future extraction point: add a second real backend before generalizing shared
+  backend helpers or CLI/backend selection rules.
+
+### One scenario family
+
+- Current limitation: the first concrete scenario is AWS ECS Express, and the
+  scenario boundary is still shaped around one real rehearsal path.
+- Justification: the codebase is intentionally moving one happy path first so
+  orchestration semantics stabilize before more target-specific concerns are
+  introduced.
+- Future extraction point: extract only the behavior that survives a second
+  scenario with materially different prerequisite or discovery needs.
+
+### Verification stays observational
+
+- Current limitation: verification wiring may translate discovered outputs into
+  named-value or HTTP checks, but it is not allowed to own service lifecycle
+  commands or cleanup registration.
+- Justification: keeping verification observational preserves the boundary where
+  deployment and teardown stay owned by the backend and cleanup manager.
+- Future extraction point: expand `VerificationSpec` only when a second real
+  verification mode requires new inputs without crossing into lifecycle
+  control.
+
+### Run artifacts stay local and filesystem-backed
+
+- Current limitation: rehearsal evidence is written under `RunContext` on the
+  local filesystem rather than through a pluggable artifact sink.
+- Justification: local paths are the simplest way to keep summaries, step logs,
+  and preserved artifacts attributable to a single run during early
+  architecture work.
+- Future extraction point: add an artifact publishing boundary only when a real
+  remote sink or CI retention workflow needs the same evidence model.

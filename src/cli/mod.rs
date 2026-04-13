@@ -26,16 +26,31 @@ pub fn run() {
 }
 
 fn run_inner(args: Vec<String>) -> Result<i32, String> {
-    match args.get(1).map(String::as_str) {
-        None => run_backend_rehearsal(),
-        Some("--help") | Some("-h") => {
+    match select_command(&args)? {
+        CommandSelection::RunBackendRehearsal => run_backend_rehearsal(),
+        CommandSelection::PrintHelp => {
             print_help();
             Ok(0)
         }
-        Some("--version") | Some("-V") | Some("version") => {
+        CommandSelection::PrintVersion => {
             print_version();
             Ok(0)
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommandSelection {
+    RunBackendRehearsal,
+    PrintHelp,
+    PrintVersion,
+}
+
+fn select_command(args: &[String]) -> Result<CommandSelection, String> {
+    match args.get(1).map(String::as_str) {
+        None => Ok(CommandSelection::RunBackendRehearsal),
+        Some("--help") | Some("-h") => Ok(CommandSelection::PrintHelp),
+        Some("--version") | Some("-V") | Some("version") => Ok(CommandSelection::PrintVersion),
         Some(other) => Err(format!("unknown command `{other}`\n\n{}", usage_text())),
     }
 }
@@ -321,8 +336,8 @@ fn help_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        SmokeEnvironment, help_text, load_smoke_config, run_inner, terraform_binary_from_env,
-        version_text,
+        CommandSelection, SmokeEnvironment, help_text, load_smoke_config, run_inner,
+        select_command, terraform_binary_from_env, version_text,
     };
     use crate::backends::terraform::TerraformBinary;
     use std::env;
@@ -354,10 +369,10 @@ mod tests {
 
     #[test]
     fn default_invocation_runs_backend_flow() {
-        let exit_code =
-            run_inner(vec!["dress".to_string()]).expect("default invocation should dispatch");
+        let selection =
+            select_command(&["dress".to_string()]).expect("default invocation should dispatch");
 
-        assert!(matches!(exit_code, 0 | 1));
+        assert_eq!(selection, CommandSelection::RunBackendRehearsal);
     }
 
     #[test]

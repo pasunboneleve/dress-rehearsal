@@ -91,18 +91,18 @@ The architecture should preserve these concepts:
 
 ### Strict provider boundary
 
-`dress-rehearsal` orchestrates Terraform/OpenTofu execution and generic
+`dress-rehearsal` orchestrates infrastructure backend execution and generic
 rehearsal mechanics only.
 
 It must not:
 - model provider services such as ECS, Lambda, Cloud Run, or similar
 - encode service-specific lifecycle concepts in the CLI or core abstractions
 - require provider-service identifiers or provider-service runtime commands
-- perform provider-specific discovery that Terraform/OpenTofu should handle
+- perform provider-specific discovery that the selected backend tool should handle
 
 If a `Scenario` abstraction remains, it is only a narrow, provider-agnostic
 way to express generic prerequisites, backend inputs, and generic output or
-artifact handling around Terraform/OpenTofu. It must not become a provider
+artifact handling around the backend tool. It must not become a provider
 service model.
 
 ### Plugin architecture, but narrow
@@ -127,7 +127,7 @@ A `Scenario` is not just:
 - a shell pipeline
 
 A `Scenario` is, at most, a provider-agnostic rehearsal contract around the
-Terraform/OpenTofu run:
+backend tool run:
 - prerequisite checks
 - backend input shaping
 - backend output discovery when needed
@@ -153,7 +153,7 @@ Do not build:
 - support for hypothetical future use cases before real demand
 - cloud-service lifecycle orchestration outside `DeploymentBackend`
 - provider-service-aware scenarios or service taxonomies
-- application correctness checks into the first Terraform/OpenTofu path
+- application correctness checks into the first backend-tool rehearsal path
 - service-specific lifecycle contracts of any kind
 
 Do build:
@@ -232,12 +232,12 @@ Before merging a change, ask:
 
 ## First-Version Boundary
 
-The first path is a Terraform/OpenTofu lifecycle rehearsal, not a provider
+The first path is a backend-tool lifecycle rehearsal, not a provider
 service test harness.
 
 Allowed:
-- Terraform/OpenTofu apply
-- Terraform/OpenTofu destroy
+- backend apply
+- backend destroy
 - prerequisite checks
 - output discovery needed to describe the run
 - artifact and log preservation

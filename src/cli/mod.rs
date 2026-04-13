@@ -1,6 +1,8 @@
 use crate::backends::terraform::{TerraformBackend, TerraformBackendConfig, TerraformBinary};
 use crate::core::{RehearsalOutcome, rehearse};
-use crate::scenarios::aws_ecs_express::{AwsEcsExpressScenario, AwsEcsExpressScenarioConfig};
+use crate::scenarios::backend_rehearsal::{
+    BackendRehearsalScenario, BackendRehearsalScenarioConfig,
+};
 use crate::steps::StepRunner;
 use owo_colors::OwoColorize;
 use std::collections::BTreeMap;
@@ -22,7 +24,7 @@ pub fn run() {
 
 fn run_inner(args: Vec<String>) -> Result<i32, String> {
     match args.get(1).map(String::as_str) {
-        Some("smoke-aws-ecs") => run_smoke_aws_ecs(),
+        Some("smoke-backend") => run_smoke_backend(),
         Some("--help") | Some("-h") | None => {
             print_usage();
             Ok(0)
@@ -31,13 +33,13 @@ fn run_inner(args: Vec<String>) -> Result<i32, String> {
     }
 }
 
-fn run_smoke_aws_ecs() -> Result<i32, String> {
+fn run_smoke_backend() -> Result<i32, String> {
     let config = load_smoke_config(&SmokeEnvironment::from_process())?;
     let backend = TerraformBackend::new(config.backend_config);
-    let scenario = AwsEcsExpressScenario::new(config.scenario_config);
+    let scenario = BackendRehearsalScenario::new(config.scenario_config);
     let runner = StepRunner::new();
 
-    dress_log("starting aws-ecs-express rehearsal");
+    dress_log("starting backend rehearsal");
     dress_log(format!("runs root {}", config.runs_root.display()));
     dress_log(format!(
         "deployment root {}",
@@ -87,7 +89,7 @@ struct SmokeConfig {
     runs_root: PathBuf,
     deployment_root: PathBuf,
     backend_config: TerraformBackendConfig,
-    scenario_config: AwsEcsExpressScenarioConfig,
+    scenario_config: BackendRehearsalScenarioConfig,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -117,8 +119,6 @@ fn load_smoke_config(environment: &SmokeEnvironment) -> Result<SmokeConfig, Stri
     let deployment_root = required_env_path(environment, "DRESS_DEPLOYMENT_ROOT")?;
     let runs_root = optional_env_path(environment, "DRESS_RUNS_ROOT")
         .unwrap_or_else(|| deployment_root.join(".dress-runs"));
-    let aws_region = required_env(environment, "DRESS_AWS_REGION")
-        .or_else(|_| required_env(environment, "AWS_REGION"))?;
     let working_directory = optional_env_path(environment, "DRESS_WORKING_DIRECTORY");
 
     let mut backend_config =
@@ -130,7 +130,7 @@ fn load_smoke_config(environment: &SmokeEnvironment) -> Result<SmokeConfig, Stri
         backend_config = backend_config.with_backend_config_file(path);
     }
 
-    let mut scenario_config = AwsEcsExpressScenarioConfig::new(&deployment_root, aws_region);
+    let mut scenario_config = BackendRehearsalScenarioConfig::new(&deployment_root);
     if let Some(path) = working_directory.clone() {
         scenario_config = scenario_config.with_working_directory(path);
     }
@@ -167,13 +167,6 @@ fn env_path_list(environment: &SmokeEnvironment, key: &str) -> Result<Vec<PathBu
             })
             .collect(),
         None => Ok(Vec::new()),
-    }
-}
-
-fn required_env(environment: &SmokeEnvironment, key: &str) -> Result<String, String> {
-    match optional_env(environment, key) {
-        Some(value) => Ok(value),
-        None => Err(format!("missing required environment variable `{key}`")),
     }
 }
 
@@ -215,11 +208,10 @@ fn dress_prefix() -> String {
 
 fn usage_text() -> &'static str {
     "dress usage:
-  cargo run -- smoke-aws-ecs
+  cargo run -- smoke-backend
 
 Required environment:
   DRESS_DEPLOYMENT_ROOT
-  DRESS_AWS_REGION or AWS_REGION
 
 Optional environment:
   DRESS_RUNS_ROOT
@@ -263,7 +255,6 @@ mod tests {
     fn load_smoke_config_uses_explicit_environment_inputs() {
         let environment = SmokeEnvironment::default()
             .with_var("DRESS_DEPLOYMENT_ROOT", "/tmp/deploy")
-            .with_var("DRESS_AWS_REGION", "ap-southeast-2")
             .with_var("DRESS_RUNS_ROOT", "/tmp/runs")
             .with_var("DRESS_WORKING_DIRECTORY", "/tmp/deploy/env/dev")
             .with_var("DRESS_TERRAFORM_BINARY", "tofu");

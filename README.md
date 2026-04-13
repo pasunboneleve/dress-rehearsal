@@ -40,7 +40,8 @@ Current scope:
 - keep the initial code skeleton narrow and structural
 
 First concrete target:
-- Terraform/OpenTofu rehearsal
+- backend-tool rehearsal
+- current implementation: Terraform/OpenTofu
 - lifecycle observability for apply/destroy, not application correctness
 - no provider-service model in the intended architecture
 
@@ -51,9 +52,9 @@ Not implemented yet:
 - application-level verification
 
 Strict boundary:
-- `dress-rehearsal` should operate Terraform/OpenTofu and generic rehearsal
+- `dress-rehearsal` should operate the selected infrastructure backend tool and generic rehearsal
   mechanics only
-- cloud providers must be driven by Terraform/OpenTofu itself, not by
+- cloud providers must be driven by the backend tool itself, not by
   provider-service-aware logic in `dress-rehearsal`
 - any current AWS-specific naming in the codebase is legacy implementation debt,
   not intended product scope

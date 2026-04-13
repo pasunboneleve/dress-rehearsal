@@ -30,7 +30,7 @@ Goal:
 ## Phase 4: Narrow input abstraction
 
 - define `Scenario`
-- keep any orchestration-side input abstraction generic to Terraform/OpenTofu
+- keep any orchestration-side input abstraction generic to the backend tool
 
 Goal:
 - keep provider-service concerns out of orchestration entirely
@@ -44,7 +44,7 @@ Goal:
 Goal:
 - make failure evidence explicit without expanding into service correctness checks
 
-## Phase 6: First Terraform/OpenTofu happy path
+## Phase 6: First backend-tool happy path
 
 - Terraform/OpenTofu backend
 - apply, artifact capture, destroy through the new abstractions
@@ -69,7 +69,7 @@ Goal:
 - CloudFormation backend implementation
 - dynamic plugins
 - multiple provider-service families
-- broad generic machinery before the Terraform/OpenTofu path works cleanly
+- broad generic machinery before the first backend-tool path works cleanly
 - direct cloud-service lifecycle commands outside backend apply/destroy
 - provider-service-aware orchestration inside `dress-rehearsal`
 - application-level verification such as HTTP health checks or readiness polling

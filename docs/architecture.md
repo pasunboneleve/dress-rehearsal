@@ -45,7 +45,7 @@ Future room: CloudFormation.
 ### `Scenario`
 
 If retained at all, owns only a minimal provider-agnostic contract around a
-Terraform/OpenTofu rehearsal:
+backend-tool rehearsal:
 - prerequisite checks
 - backend input shaping when needed
 - discovery of backend-managed outputs when needed
@@ -112,7 +112,7 @@ enough to support iterative development rather than broad platform coverage.
 
 ## Early Shape
 
-The first implementation path should move one real Terraform/OpenTofu happy path
+The first implementation path should move one real backend-tool happy path
 through these boundaries:
 
 Initial concrete target:
@@ -140,13 +140,13 @@ Execution path:
 - Failures must be diagnosable from preserved step logs, summaries, and backend artifacts.
 - The harness must not issue direct cloud-service lifecycle commands outside the backend contract.
 - The harness must not model provider services or require provider-service
-  concepts in order to run Terraform/OpenTofu.
+  concepts in order to run the chosen backend tool.
 
 ## Boundary Notes
 
-- Terraform/OpenTofu is the sole cloud-facing control surface. Cloud-provider
-  APIs should be reached only through Terraform/OpenTofu providers, not through
-  provider-aware orchestration in `dress-rehearsal`.
+- The selected backend tool is the sole cloud-facing control surface.
+  Cloud-provider APIs should be reached only through that backend tool, not
+  through provider-aware orchestration in `dress-rehearsal`.
 - Scenario bootstrap remains inside `ScenarioPreparation`: it may add
   prerequisite steps and scenario-owned cleanup actions before backend
   initialization, but it must not implicitly register backend cleanup or
@@ -204,7 +204,7 @@ Execution path:
 - Current limitation: `DeploymentBackend` currently has one concrete family,
   Terraform/OpenTofu.
 - Justification: the first backend exists to prove the apply/destroy lifecycle
-  boundary before broadening the configuration surface.
+  boundary before broadening the configuration surface to additional tools.
 - Future extraction point: add a second real backend before generalizing shared
   backend helpers or CLI/backend selection rules.
 
@@ -213,7 +213,7 @@ Execution path:
 - Current limitation: the runtime still contains a legacy provider-service-aware
   scenario layer, even though the intended design is provider-agnostic.
 - Justification: this is explicit design debt, not endorsed scope. It is being
-  tracked for removal while preserving the Terraform/OpenTofu rehearsal core.
+  tracked for removal while preserving the backend-tool rehearsal core.
 - Future extraction point: either remove the abstraction entirely or narrow it
   to generic backend preparation and output handling with no provider-service
   vocabulary.

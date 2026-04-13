@@ -7,9 +7,29 @@ needed live. `dress-rehearsal` exists to make that rehearsal explicit:
 materialize isolated context, apply infrastructure, tear it down, and preserve
 evidence when things fail.
 
-The metaphor is literal. A dress rehearsal is the full run before the real
-performance. This tool is for rehearsing infrastructure changes the same way:
-with the real sequence, clear boundaries, and visible failure handling.
+<br>
+
+<p align="center" style="margin: 0.35rem 0 0.35rem 0;">
+  <a href="https://commons.wikimedia.org/wiki/File:Cradle_Will_Rock_Rehearsal_370-9.jpg"
+  target="_blank"
+  rel="noopener noreferrer">
+    <img
+        src="docs/static/craddle-will-rock-rehearsal-1937.jpg"
+        alt="The Cradle Will Rock rehearsal, 1937"
+        style="width:100%;"
+        />
+  </a>
+</p>
+
+<p align="center" style="margin: 0 0 1.25rem 0;">
+    <sub>Practice the failure.</sub>
+</p>
+<br>
+
+A dress rehearsal is the full run before the real performance.
+
+This tool does the same for infrastructure:\
+runs it end-to-end, observes what breaks, and tears it down safely.
 
 Current scope:
 - establish architecture and execution boundaries

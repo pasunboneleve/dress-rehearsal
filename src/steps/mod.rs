@@ -889,18 +889,21 @@ mod tests {
     #[test]
     fn applies_explicit_environment_and_working_directory() {
         let runner = StepRunner::new();
+        let expected_dir = env::temp_dir();
         let command = shell_command("printf '%s:%s' \"$STEP_VALUE\" \"$PWD\"")
             .with_env("STEP_VALUE", "configured")
-            .with_current_dir(env::temp_dir());
+            .with_current_dir(&expected_dir);
 
         let outcome = runner.run_command(&command).expect("step should succeed");
+        let stdout = outcome.stdout_text();
+        let (_, reported_dir) = stdout
+            .split_once(':')
+            .expect("stdout should contain configured directory output");
+        let reported_dir = std::fs::canonicalize(reported_dir).expect("reported directory");
+        let expected_dir = std::fs::canonicalize(expected_dir).expect("expected directory");
 
         assert!(outcome.stdout_text().starts_with("configured:"));
-        assert!(
-            outcome
-                .stdout_text()
-                .contains(&env::temp_dir().display().to_string())
-        );
+        assert_eq!(reported_dir, expected_dir);
         assert_eq!(runner.recorded_events().len(), 2);
     }
 

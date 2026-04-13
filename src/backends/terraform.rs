@@ -263,6 +263,7 @@ mod tests {
     use std::env;
     use std::fs;
     use std::io;
+    use std::path::Path;
     use std::path::PathBuf;
 
     struct TestDir {
@@ -287,6 +288,14 @@ mod tests {
     impl Drop for TestDir {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn platform_true_binary() -> &'static Path {
+        if cfg!(target_os = "macos") {
+            Path::new("/usr/bin/true")
+        } else {
+            Path::new("/bin/true")
         }
     }
 
@@ -366,10 +375,9 @@ mod tests {
         fs::create_dir_all(&scenario_root)?;
         run_context.materialize()?;
 
-        let backend = TerraformBackend::new(
-            TerraformBackendConfig::default()
-                .with_binary(TerraformBinary::Custom(PathBuf::from("/bin/true"))),
-        );
+        let backend = TerraformBackend::new(TerraformBackendConfig::default().with_binary(
+            TerraformBinary::Custom(platform_true_binary().to_path_buf()),
+        ));
         let request = BackendRequest::new(&scenario_root);
         let session = backend
             .initialize(&run_context, &request, &StepRunner::new())

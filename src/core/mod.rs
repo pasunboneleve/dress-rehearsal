@@ -577,41 +577,16 @@ mod tests {
         BackendError, BackendOutputs, BackendRequest, BackendSession, DeploymentBackend,
     };
     use crate::cleanup::CleanupAction;
-    use crate::context::{RunContext, RunId};
+    use crate::context::RunContext;
     use crate::scenarios::{
         Scenario, ScenarioDeployment, ScenarioDiscovery, ScenarioError, ScenarioPreparation,
         ScenarioTarget, ScenarioVerification,
     };
     use crate::steps::{StepCommand, StepRunner};
-    use std::env;
+    use crate::test_support::TestDir;
     use std::fs;
     use std::io;
     use std::path::PathBuf;
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(name: &str) -> io::Result<Self> {
-            let path = env::temp_dir().join(format!(
-                "dress-rehearsal-core-tests-{name}-{}",
-                RunId::generate().as_str()
-            ));
-            fs::create_dir_all(&path)?;
-            Ok(Self { path })
-        }
-
-        fn path(&self) -> &PathBuf {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
 
     struct FakeBackend {
         deployment_root: PathBuf,
@@ -671,6 +646,8 @@ mod tests {
         deployment_root: PathBuf,
         cleanup_log_path: PathBuf,
         failure_artifact_path: PathBuf,
+        verification: ScenarioVerification,
+        extra_preparation_steps: Vec<StepCommand>,
         should_fail_prepare: bool,
     }
 
@@ -684,27 +661,35 @@ mod tests {
             _run_context: &RunContext,
             _runner: &StepRunner,
         ) -> Result<ScenarioPreparation, ScenarioError> {
-            let preparation = ScenarioPreparation::new(BackendRequest::new(&self.deployment_root))
-                .with_preparation_step(
-                    StepCommand::new("prepare-step", "/bin/sh")
-                        .with_args(["-c".to_string(), "printf 'prepared' >/dev/null".to_string()]),
-                )
-                .with_cleanup_action(
-                    CleanupAction::new(
-                        "scenario-cleanup",
-                        StepCommand::new("scenario-cleanup-step", "/bin/sh").with_args([
+            let mut preparation =
+                ScenarioPreparation::new(BackendRequest::new(&self.deployment_root))
+                    .with_preparation_step(
+                        StepCommand::new("prepare-step", "/bin/sh").with_args([
                             "-c".to_string(),
-                            format!(
-                                "printf 'scenario-cleanup\n' >> '{}'",
-                                self.cleanup_log_path.display()
-                            ),
+                            "printf 'prepared' >/dev/null".to_string(),
                         ]),
                     )
-                    .preserve_on_failure(crate::cleanup::CleanupArtifact::new(
-                        &self.failure_artifact_path,
-                        "cleanup/failure-artifact.txt",
-                    )),
-                );
+                    .with_cleanup_action(
+                        CleanupAction::new(
+                            "scenario-cleanup",
+                            StepCommand::new("scenario-cleanup-step", "/bin/sh").with_args([
+                                "-c".to_string(),
+                                format!(
+                                    "printf 'scenario-cleanup\n' >> '{}'",
+                                    self.cleanup_log_path.display()
+                                ),
+                            ]),
+                        )
+                        .preserve_on_failure(
+                            crate::cleanup::CleanupArtifact::new(
+                                &self.failure_artifact_path,
+                                "cleanup/failure-artifact.txt",
+                            ),
+                        ),
+                    );
+            for step in &self.extra_preparation_steps {
+                preparation = preparation.with_preparation_step(step.clone());
+            }
 
             if self.should_fail_prepare {
                 return Ok(preparation.with_preparation_step(
@@ -721,30 +706,24 @@ mod tests {
             _deployment: &ScenarioDeployment,
             _runner: &StepRunner,
         ) -> Result<ScenarioDiscovery, ScenarioError> {
-            Ok(ScenarioDiscovery::new(ScenarioVerification::new(
-                "ready",
-                ScenarioTarget::NamedOutput {
-                    key: "service".to_string(),
-                    value: "ok".to_string(),
-                },
-            ))
-            .with_cleanup_action(CleanupAction::new(
-                "discovery-cleanup",
-                StepCommand::new("discovery-cleanup-step", "/bin/sh").with_args([
-                    "-c".to_string(),
-                    format!(
-                        "printf 'discovery-cleanup\n' >> '{}'",
-                        self.cleanup_log_path.display()
-                    ),
-                ]),
-            ))
-            .with_surfaced_value("service", "ok"))
+            Ok(ScenarioDiscovery::new(self.verification.clone())
+                .with_cleanup_action(CleanupAction::new(
+                    "discovery-cleanup",
+                    StepCommand::new("discovery-cleanup-step", "/bin/sh").with_args([
+                        "-c".to_string(),
+                        format!(
+                            "printf 'discovery-cleanup\n' >> '{}'",
+                            self.cleanup_log_path.display()
+                        ),
+                    ]),
+                ))
+                .with_surfaced_value("service", "ok"))
         }
     }
 
     #[test]
     fn rehearses_successful_path_and_tears_down_in_reverse_order() -> io::Result<()> {
-        let temp_dir = TestDir::new("success")?;
+        let temp_dir = TestDir::new("core-tests", "success")?;
         let cleanup_log_path = temp_dir.path().join("cleanup.log");
         let deployment_root = temp_dir.path().join("deployment");
         fs::create_dir_all(&deployment_root)?;
@@ -758,6 +737,8 @@ mod tests {
             deployment_root,
             cleanup_log_path: cleanup_log_path.clone(),
             failure_artifact_path: artifact_path,
+            verification: named_output_verification("ready"),
+            extra_preparation_steps: Vec::new(),
             should_fail_prepare: false,
         };
 
@@ -806,7 +787,7 @@ mod tests {
 
     #[test]
     fn failed_preparation_runs_failure_cleanup_and_preserves_artifacts() -> io::Result<()> {
-        let temp_dir = TestDir::new("failure-cleanup")?;
+        let temp_dir = TestDir::new("core-tests", "failure-cleanup")?;
         let cleanup_log_path = temp_dir.path().join("cleanup.log");
         let deployment_root = temp_dir.path().join("deployment");
         fs::create_dir_all(&deployment_root)?;
@@ -820,6 +801,8 @@ mod tests {
             deployment_root,
             cleanup_log_path: temp_dir.path().join("cleanup.log"),
             failure_artifact_path: artifact_path,
+            verification: named_output_verification("ready"),
+            extra_preparation_steps: Vec::new(),
             should_fail_prepare: true,
         };
 
@@ -862,5 +845,143 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn verification_changes_do_not_reshape_cleanup_order() -> io::Result<()> {
+        let baseline = successful_rehearsal_with(
+            "verification-boundary-baseline",
+            named_output_verification("ready"),
+            Vec::new(),
+        )?;
+        let verification_variant = successful_rehearsal_with(
+            "verification-boundary-variant",
+            named_output_verification("service accepted the rehearsal")
+                .with_metadata("probe", "alternate")
+                .with_metadata("operator-note", "verification changed only"),
+            Vec::new(),
+        )?;
+
+        assert_eq!(
+            baseline.cleanup_log, verification_variant.cleanup_log,
+            "verification-only changes should not alter cleanup order"
+        );
+        assert_eq!(
+            baseline.cleanup_results, verification_variant.cleanup_results,
+            "verification-only changes should not register different cleanup actions"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_failures_do_not_cross_backend_cleanup_boundary() -> io::Result<()> {
+        let temp_dir = TestDir::new("core-tests", "prepare-boundary-failure")?;
+        let cleanup_log_path = temp_dir.path().join("cleanup.log");
+        let deployment_root = temp_dir.path().join("deployment");
+        fs::create_dir_all(&deployment_root)?;
+        let backend = FakeBackend {
+            deployment_root: deployment_root.clone(),
+            cleanup_log_path: cleanup_log_path.clone(),
+        };
+        let artifact_path = temp_dir.path().join("artifact.txt");
+        let bootstrap_marker_path = temp_dir.path().join("bootstrap-marker.txt");
+        fs::write(&artifact_path, "artifact")?;
+        let scenario = FakeScenario {
+            deployment_root,
+            cleanup_log_path: cleanup_log_path.clone(),
+            failure_artifact_path: artifact_path,
+            verification: named_output_verification("ready"),
+            extra_preparation_steps: vec![StepCommand::new("prepare-step", "/bin/sh").with_args([
+                "-c".to_string(),
+                format!("printf 'bootstrap' > '{}'", bootstrap_marker_path.display()),
+            ])],
+            should_fail_prepare: true,
+        };
+
+        let outcome = rehearse(temp_dir.path(), &backend, &scenario, &StepRunner::new());
+
+        match outcome {
+            RehearsalOutcome::Failed(failure) => {
+                assert_eq!(failure.stage(), RehearsalStage::Prepare);
+                let cleanup_report = failure
+                    .cleanup_report()
+                    .expect("failed rehearsals should include cleanup");
+                assert_eq!(cleanup_report.results().len(), 1);
+                assert_eq!(
+                    cleanup_report.results()[0].action_name(),
+                    "scenario-cleanup"
+                );
+                assert_eq!(fs::read_to_string(cleanup_log_path)?, "scenario-cleanup\n");
+                assert!(bootstrap_marker_path.is_file());
+            }
+            RehearsalOutcome::Succeeded(_) => {
+                panic!("expected prepare failure when bootstrap step is followed by a failure")
+            }
+        }
+
+        Ok(())
+    }
+
+    fn named_output_verification(readiness_label: &str) -> ScenarioVerification {
+        ScenarioVerification::new(
+            readiness_label,
+            ScenarioTarget::NamedOutput {
+                key: "service".to_string(),
+                value: "ok".to_string(),
+            },
+        )
+    }
+
+    fn successful_rehearsal_with(
+        name: &str,
+        verification: ScenarioVerification,
+        extra_preparation_steps: Vec<StepCommand>,
+    ) -> io::Result<SuccessfulRehearsalObservation> {
+        let temp_dir = TestDir::new("core-tests", name)?;
+        let cleanup_log_path = temp_dir.path().join("cleanup.log");
+        let deployment_root = temp_dir.path().join("deployment");
+        fs::create_dir_all(&deployment_root)?;
+        let backend = FakeBackend {
+            deployment_root: deployment_root.clone(),
+            cleanup_log_path: cleanup_log_path.clone(),
+        };
+        let artifact_path = temp_dir.path().join("artifact.txt");
+        fs::write(&artifact_path, "artifact")?;
+        let scenario = FakeScenario {
+            deployment_root: deployment_root.clone(),
+            cleanup_log_path,
+            failure_artifact_path: artifact_path,
+            verification,
+            extra_preparation_steps,
+            should_fail_prepare: false,
+        };
+
+        let outcome = rehearse(temp_dir.path(), &backend, &scenario, &StepRunner::new());
+        let success = match outcome {
+            RehearsalOutcome::Succeeded(success) => success,
+            RehearsalOutcome::Failed(failure) => {
+                panic!(
+                    "expected success, got failure at {:?}: {}",
+                    failure.stage(),
+                    failure.error()
+                )
+            }
+        };
+
+        Ok(SuccessfulRehearsalObservation {
+            cleanup_log: fs::read_to_string(temp_dir.path().join("cleanup.log"))?,
+            cleanup_results: success
+                .cleanup_report()
+                .results()
+                .iter()
+                .map(|result| result.action_name().to_string())
+                .collect(),
+        })
+    }
+
+    struct SuccessfulRehearsalObservation {
+        cleanup_log: String,
+        cleanup_results: Vec<String>,
     }
 }

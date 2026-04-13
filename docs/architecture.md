@@ -143,6 +143,19 @@ Execution path:
 - Failures must be diagnosable from preserved step logs, summaries, and backend artifacts.
 - The harness must not issue direct cloud-service lifecycle commands outside the backend contract.
 
+## Boundary Notes
+
+- Scenario bootstrap remains inside `ScenarioPreparation`: it may add
+  prerequisite steps and scenario-owned cleanup actions before backend
+  initialization, but it must not implicitly register backend cleanup or
+  reshape teardown order across that boundary.
+- Verification wiring begins only after `Scenario::discover` receives backend
+  outputs. Changing verification labels, metadata, requests, or assertions must
+  not change deployment inputs or cleanup ordering.
+- Any cleanup needed after verification failure must already be registered
+  through scenario preparation, scenario discovery, or the backend destroy
+  action. Verification itself is not a lifecycle control surface.
+
 ## Operational Invariants
 
 ### Credentials and secrets

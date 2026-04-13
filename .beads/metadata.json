@@ -1,6 +1,7 @@
 {
   "database": "dolt",
-  "jsonl_export": "issues.jsonl",
   "backend": "dolt",
-  "dolt_database": "beads_dress_rehearsal"
+  "dolt_mode": "embedded",
+  "dolt_database": "beads_dress_rehearsal",
+  "project_id": "bf0c3515-2b3e-4e10-b461-93730a34c213"
 }

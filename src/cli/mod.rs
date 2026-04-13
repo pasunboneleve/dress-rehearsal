@@ -3,7 +3,9 @@ use crate::core::{RehearsalOutcome, rehearse};
 use crate::scenarios::aws_ecs_express::{AwsEcsExpressScenario, AwsEcsExpressScenarioConfig};
 use crate::steps::StepRunner;
 use owo_colors::OwoColorize;
+use std::collections::BTreeMap;
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
@@ -30,7 +32,7 @@ fn run_inner(args: Vec<String>) -> Result<i32, String> {
 }
 
 fn run_smoke_aws_ecs() -> Result<i32, String> {
-    let config = load_smoke_config()?;
+    let config = load_smoke_config(&SmokeEnvironment::from_process())?;
     let backend = TerraformBackend::new(config.backend_config);
     let scenario = AwsEcsExpressScenario::new(config.scenario_config);
     let runner = StepRunner::new();
@@ -88,19 +90,43 @@ struct SmokeConfig {
     scenario_config: AwsEcsExpressScenarioConfig,
 }
 
-fn load_smoke_config() -> Result<SmokeConfig, String> {
-    let deployment_root = required_env_path("DRESS_DEPLOYMENT_ROOT")?;
-    let runs_root =
-        optional_env_path("DRESS_RUNS_ROOT").unwrap_or_else(|| deployment_root.join(".dress-runs"));
-    let aws_region = required_env("DRESS_AWS_REGION").or_else(|_| required_env("AWS_REGION"))?;
-    let working_directory = optional_env_path("DRESS_WORKING_DIRECTORY");
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SmokeEnvironment {
+    values: BTreeMap<OsString, OsString>,
+}
+
+impl SmokeEnvironment {
+    fn from_process() -> Self {
+        Self {
+            values: env::vars_os().collect(),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_var(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
+        self.values.insert(key.into(), value.into());
+        self
+    }
+
+    fn get(&self, key: &str) -> Option<&OsStr> {
+        self.values.get(OsStr::new(key)).map(OsString::as_os_str)
+    }
+}
+
+fn load_smoke_config(environment: &SmokeEnvironment) -> Result<SmokeConfig, String> {
+    let deployment_root = required_env_path(environment, "DRESS_DEPLOYMENT_ROOT")?;
+    let runs_root = optional_env_path(environment, "DRESS_RUNS_ROOT")
+        .unwrap_or_else(|| deployment_root.join(".dress-runs"));
+    let aws_region = required_env(environment, "DRESS_AWS_REGION")
+        .or_else(|_| required_env(environment, "AWS_REGION"))?;
+    let working_directory = optional_env_path(environment, "DRESS_WORKING_DIRECTORY");
 
     let mut backend_config =
-        TerraformBackendConfig::default().with_binary(terraform_binary_from_env()?);
-    for path in env_path_list("DRESS_TF_VAR_FILES")? {
+        TerraformBackendConfig::default().with_binary(terraform_binary_from_env(environment)?);
+    for path in env_path_list(environment, "DRESS_TF_VAR_FILES")? {
         backend_config = backend_config.with_var_file(path);
     }
-    for path in env_path_list("DRESS_TF_BACKEND_CONFIG_FILES")? {
+    for path in env_path_list(environment, "DRESS_TF_BACKEND_CONFIG_FILES")? {
         backend_config = backend_config.with_backend_config_file(path);
     }
 
@@ -117,8 +143,8 @@ fn load_smoke_config() -> Result<SmokeConfig, String> {
     })
 }
 
-fn terraform_binary_from_env() -> Result<TerraformBinary, String> {
-    match optional_env("DRESS_TERRAFORM_BINARY") {
+fn terraform_binary_from_env(environment: &SmokeEnvironment) -> Result<TerraformBinary, String> {
+    match optional_env(environment, "DRESS_TERRAFORM_BINARY") {
         Some(value) if value == "terraform" => Ok(TerraformBinary::Terraform),
         Some(value) if value == "tofu" => Ok(TerraformBinary::OpenTofu),
         Some(value) if value.trim().is_empty() => {
@@ -129,9 +155,9 @@ fn terraform_binary_from_env() -> Result<TerraformBinary, String> {
     }
 }
 
-fn env_path_list(key: &str) -> Result<Vec<PathBuf>, String> {
-    match env::var_os(key) {
-        Some(value) => env::split_paths(&value)
+fn env_path_list(environment: &SmokeEnvironment, key: &str) -> Result<Vec<PathBuf>, String> {
+    match environment.get(key) {
+        Some(value) => env::split_paths(value)
             .map(|path| {
                 if path.as_os_str().is_empty() {
                     Err(format!("`{key}` contains an empty path entry"))
@@ -144,23 +170,29 @@ fn env_path_list(key: &str) -> Result<Vec<PathBuf>, String> {
     }
 }
 
-fn required_env(key: &str) -> Result<String, String> {
-    match optional_env(key) {
+fn required_env(environment: &SmokeEnvironment, key: &str) -> Result<String, String> {
+    match optional_env(environment, key) {
         Some(value) => Ok(value),
         None => Err(format!("missing required environment variable `{key}`")),
     }
 }
 
-fn optional_env(key: &str) -> Option<String> {
-    env::var(key).ok().filter(|value| !value.trim().is_empty())
+fn optional_env(environment: &SmokeEnvironment, key: &str) -> Option<String> {
+    environment
+        .get(key)
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
-fn required_env_path(key: &str) -> Result<PathBuf, String> {
-    optional_env_path(key).ok_or_else(|| format!("missing required environment variable `{key}`"))
+fn required_env_path(environment: &SmokeEnvironment, key: &str) -> Result<PathBuf, String> {
+    optional_env_path(environment, key)
+        .ok_or_else(|| format!("missing required environment variable `{key}`"))
 }
 
-fn optional_env_path(key: &str) -> Option<PathBuf> {
-    optional_env(key).map(PathBuf::from)
+fn optional_env_path(environment: &SmokeEnvironment, key: &str) -> Option<PathBuf> {
+    optional_env(environment, key).map(PathBuf::from)
 }
 
 fn print_usage() {
@@ -202,12 +234,9 @@ Deployment root contract:
 
 #[cfg(test)]
 mod tests {
-    use super::{run_inner, terraform_binary_from_env};
+    use super::{SmokeEnvironment, load_smoke_config, run_inner, terraform_binary_from_env};
     use crate::backends::terraform::TerraformBinary;
-    use std::env;
-    use std::ffi::OsString;
     use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn help_command_exits_successfully() {
@@ -219,9 +248,10 @@ mod tests {
 
     #[test]
     fn custom_terraform_binary_path_is_supported() {
-        let _guard = EnvGuard::set("DRESS_TERRAFORM_BINARY", "/custom/tofu");
+        let environment =
+            SmokeEnvironment::default().with_var("DRESS_TERRAFORM_BINARY", "/custom/tofu");
 
-        let binary = terraform_binary_from_env().expect("custom binary should parse");
+        let binary = terraform_binary_from_env(&environment).expect("custom binary should parse");
 
         assert_eq!(
             binary,
@@ -229,32 +259,24 @@ mod tests {
         );
     }
 
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<OsString>,
-    }
+    #[test]
+    fn load_smoke_config_uses_explicit_environment_inputs() {
+        let environment = SmokeEnvironment::default()
+            .with_var("DRESS_DEPLOYMENT_ROOT", "/tmp/deploy")
+            .with_var("DRESS_AWS_REGION", "ap-southeast-2")
+            .with_var("DRESS_RUNS_ROOT", "/tmp/runs")
+            .with_var("DRESS_WORKING_DIRECTORY", "/tmp/deploy/env/dev")
+            .with_var("DRESS_TERRAFORM_BINARY", "tofu");
 
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let _lock = env_lock().lock().expect("env lock should not be poisoned");
-            let original = env::var_os(key);
-            unsafe { env::set_var(key, value) };
-            Self { key, original }
-        }
-    }
+        let config =
+            load_smoke_config(&environment).expect("config should load from explicit environment");
 
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            let _lock = env_lock().lock().expect("env lock should not be poisoned");
-            match &self.original {
-                Some(value) => unsafe { env::set_var(self.key, value) },
-                None => unsafe { env::remove_var(self.key) },
-            }
-        }
-    }
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+        assert_eq!(config.deployment_root, PathBuf::from("/tmp/deploy"));
+        assert_eq!(config.runs_root, PathBuf::from("/tmp/runs"));
+        assert_eq!(config.backend_config.binary(), &TerraformBinary::OpenTofu);
+        assert_eq!(
+            config.scenario_config.working_directory(),
+            Some(PathBuf::from("/tmp/deploy/env/dev").as_path())
+        );
     }
 }

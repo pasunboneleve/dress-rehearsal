@@ -8,9 +8,12 @@ use owo_colors::OwoColorize;
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn run() {
     match run_inner(env::args().collect()) {
@@ -24,16 +27,20 @@ pub fn run() {
 
 fn run_inner(args: Vec<String>) -> Result<i32, String> {
     match args.get(1).map(String::as_str) {
-        Some("smoke-backend") => run_smoke_backend(),
-        Some("--help") | Some("-h") | None => {
-            print_usage();
+        None => run_backend_rehearsal(),
+        Some("--help") | Some("-h") => {
+            print_help();
+            Ok(0)
+        }
+        Some("--version") | Some("-V") | Some("version") => {
+            print_version();
             Ok(0)
         }
         Some(other) => Err(format!("unknown command `{other}`\n\n{}", usage_text())),
     }
 }
 
-fn run_smoke_backend() -> Result<i32, String> {
+fn run_backend_rehearsal() -> Result<i32, String> {
     let config = load_smoke_config(&SmokeEnvironment::from_process())?;
     let backend = TerraformBackend::new(config.backend_config);
     let scenario = BackendRehearsalScenario::new(config.scenario_config);
@@ -188,13 +195,23 @@ fn optional_env_path(environment: &SmokeEnvironment, key: &str) -> Option<PathBu
     optional_env(environment, key).map(PathBuf::from)
 }
 
-fn print_usage() {
-    dress_log(usage_text());
+fn print_help() {
+    print_lines(&help_text());
+}
+
+fn print_version() {
+    print_lines(&version_text());
 }
 
 fn dress_log(message: impl AsRef<str>) {
     for line in message.as_ref().lines() {
         eprintln!("{} {}", dress_prefix(), line);
+    }
+}
+
+fn print_lines(message: &str) {
+    for line in message.lines() {
+        println!("{line}");
     }
 }
 
@@ -208,25 +225,98 @@ fn dress_prefix() -> String {
 
 fn usage_text() -> &'static str {
     "dress usage:
-  cargo run -- smoke-backend
+  dress
+  dress --help
+  dress --version
+  dress version"
+}
 
-Required environment:
-  DRESS_DEPLOYMENT_ROOT
+fn version_text() -> String {
+    format!("dress {}", VERSION)
+}
 
-Optional environment:
-  DRESS_RUNS_ROOT
-  DRESS_WORKING_DIRECTORY
-  DRESS_TERRAFORM_BINARY
-  DRESS_TF_VAR_FILES
-  DRESS_TF_BACKEND_CONFIG_FILES
-
-Deployment root contract:
-  Terraform/OpenTofu must be runnable for apply and destroy"
+fn help_text() -> String {
+    let mut text = String::new();
+    let _ = writeln!(text, "dress {}", VERSION);
+    let _ = writeln!(text);
+    let _ = writeln!(
+        text,
+        "Infrastructure rehearsal CLI for backend-tool apply/destroy runs."
+    );
+    let _ = writeln!(text);
+    let _ = writeln!(text, "Current first-version scope:");
+    let _ = writeln!(text, "- runs one backend rehearsal flow");
+    let _ = writeln!(text, "- current backend implementation: Terraform/OpenTofu");
+    let _ = writeln!(
+        text,
+        "- captures step logs, summaries, and preserved artifacts"
+    );
+    let _ = writeln!(
+        text,
+        "- does not model provider services or perform application health checks"
+    );
+    let _ = writeln!(text);
+    let _ = writeln!(text, "What happens when you run `dress`:");
+    let _ = writeln!(
+        text,
+        "- loads the backend rehearsal configuration from explicit environment variables"
+    );
+    let _ = writeln!(
+        text,
+        "- materializes an isolated run directory under `DRESS_RUNS_ROOT` or `<deployment-root>/.dress-runs`"
+    );
+    let _ = writeln!(
+        text,
+        "- runs backend init/apply, collects outputs, and then runs backend destroy"
+    );
+    let _ = writeln!(
+        text,
+        "- preserves failure evidence when apply, verification, or cleanup fails"
+    );
+    let _ = writeln!(text);
+    let _ = writeln!(text, "Minimal requirements:");
+    let _ = writeln!(
+        text,
+        "- `DRESS_DEPLOYMENT_ROOT` points at a backend deployment directory"
+    );
+    let _ = writeln!(
+        text,
+        "- Terraform or OpenTofu is installed, unless `DRESS_TERRAFORM_BINARY` points elsewhere"
+    );
+    let _ = writeln!(
+        text,
+        "- the selected backend configuration can complete apply and destroy from that directory"
+    );
+    let _ = writeln!(text);
+    let _ = writeln!(text, "Important environment variables:");
+    let _ = writeln!(text, "- required: `DRESS_DEPLOYMENT_ROOT`");
+    let _ = writeln!(text, "- optional: `DRESS_RUNS_ROOT`");
+    let _ = writeln!(text, "- optional: `DRESS_WORKING_DIRECTORY`");
+    let _ = writeln!(
+        text,
+        "- optional: `DRESS_TERRAFORM_BINARY` (`terraform`, `tofu`, or a custom path)"
+    );
+    let _ = writeln!(text, "- optional: `DRESS_TF_VAR_FILES` (path list)");
+    let _ = writeln!(
+        text,
+        "- optional: `DRESS_TF_BACKEND_CONFIG_FILES` (path list)"
+    );
+    let _ = writeln!(text);
+    let _ = writeln!(text, "Commands:");
+    let _ = writeln!(text, "- `dress` runs the current backend rehearsal flow");
+    let _ = writeln!(
+        text,
+        "- `dress version` and `dress --version` print the CLI version"
+    );
+    text
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SmokeEnvironment, load_smoke_config, run_inner, terraform_binary_from_env};
+    use super::{
+        SmokeEnvironment, help_text, load_smoke_config, run_inner, terraform_binary_from_env,
+        version_text,
+    };
     use crate::backends::terraform::TerraformBinary;
     use std::path::PathBuf;
 
@@ -236,6 +326,38 @@ mod tests {
             .expect("help should succeed");
 
         assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn version_command_exits_successfully() {
+        let exit_code = run_inner(vec!["dress".to_string(), "version".to_string()])
+            .expect("version should succeed");
+
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn version_flag_exits_successfully() {
+        let exit_code = run_inner(vec!["dress".to_string(), "--version".to_string()])
+            .expect("version flag should succeed");
+
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn default_invocation_runs_backend_flow() {
+        let error =
+            run_inner(vec!["dress".to_string()]).expect_err("default run should require config");
+
+        assert!(error.contains("DRESS_DEPLOYMENT_ROOT"));
+    }
+
+    #[test]
+    fn removed_smoke_backend_subcommand_is_rejected() {
+        let error = run_inner(vec!["dress".to_string(), "smoke-backend".to_string()])
+            .expect_err("legacy subcommand should be rejected");
+
+        assert!(error.contains("unknown command `smoke-backend`"));
     }
 
     #[test]
@@ -269,5 +391,23 @@ mod tests {
             config.scenario_config.working_directory(),
             Some(PathBuf::from("/tmp/deploy/env/dev").as_path())
         );
+    }
+
+    #[test]
+    fn help_text_describes_current_scope_honestly() {
+        let help = help_text();
+
+        assert!(help.contains("Infrastructure rehearsal CLI"));
+        assert!(help.contains("current backend implementation: Terraform/OpenTofu"));
+        assert!(help.contains("does not model provider services"));
+        assert!(help.contains("`dress` runs the current backend rehearsal flow"));
+        assert!(help.contains("`DRESS_DEPLOYMENT_ROOT`"));
+    }
+
+    #[test]
+    fn version_text_uses_package_version() {
+        let version = version_text();
+
+        assert_eq!(version, format!("dress {}", env!("CARGO_PKG_VERSION")));
     }
 }

@@ -200,6 +200,20 @@ When substantial work is needed:
 - keep issue scope explicit
 - prefer small executable units
 
+### Local developer workflow
+
+For local sibling-template testing, prefer explicit sourced environment files
+that are ignored by git, such as `.dress.local.env` or
+`scripts/test-env-vars.local.sh`.
+
+Do not commit:
+- personal machine paths
+- automatically loaded local config files
+- shell helpers that silently inject ambient state
+
+If local test state is needed, require the developer to source it explicitly in
+their shell before running `dress`.
+
 ### roborev
 
 Use roborev for adversarial review.

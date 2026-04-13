@@ -47,8 +47,6 @@ First concrete target:
 
 Not implemented yet:
 - broad backend coverage
-- provider-agnostic CLI cleanup of legacy AWS-specific naming
-- removal of legacy provider-service-aware runtime abstractions
 - application-level verification
 
 Strict boundary:
@@ -78,6 +76,68 @@ Supported platforms are currently:
 - macOS Apple Silicon
 
 Windows is not currently supported or tested.
+
+## Usage
+
+Run the current backend rehearsal flow:
+
+```bash
+dress
+```
+
+Show help or version:
+
+```bash
+dress --help
+dress --version
+dress version
+```
+
+Minimum environment:
+
+```bash
+export DRESS_DEPLOYMENT_ROOT=/path/to/deployment/root
+```
+
+Useful optional environment:
+
+```bash
+export DRESS_RUNS_ROOT=/tmp/dress-runs
+export DRESS_WORKING_DIRECTORY=/path/to/deployment/root/env/dev
+export DRESS_TERRAFORM_BINARY=tofu
+```
+
+## Local Dev Workflow
+
+For local sibling-template testing, keep machine-specific paths out of git and
+use an explicit sourced env file such as `.dress.local.env`, which is ignored by
+the repo.
+
+Example local-only file contents:
+
+```bash
+export DRESS_DEPLOYMENT_ROOT=../minimal-aws-github-ci-template/infra
+export DRESS_WORKING_DIRECTORY=../minimal-aws-github-ci-template/infra
+export DRESS_TERRAFORM_BINARY=tofu
+```
+
+or:
+
+```bash
+export DRESS_DEPLOYMENT_ROOT=../minimal-gcp-github-ci-template/infra
+export DRESS_WORKING_DIRECTORY=../minimal-gcp-github-ci-template/infra
+export DRESS_TERRAFORM_BINARY=tofu
+```
+
+Use it explicitly:
+
+```bash
+source .dress.local.env
+dress
+```
+
+`dress` does not load that file automatically. The state remains explicit in
+the shell session that sourced it.
 
 ## License
 

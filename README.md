@@ -62,6 +62,13 @@ Tagged releases publish prebuilt archives for:
 - `x86_64-unknown-linux-gnu`
 - `aarch64-apple-darwin`
 
+Supported platforms are currently:
+
+- Linux x86_64
+- macOS Apple Silicon
+
+Windows is not currently supported or tested.
+
 ## License
 
 Released under the [MIT License](LICENSE).

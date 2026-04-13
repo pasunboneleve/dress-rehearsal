@@ -40,14 +40,23 @@ Current scope:
 - keep the initial code skeleton narrow and structural
 
 First concrete target:
-- Terraform/OpenTofu backend
-- AWS ECS Express infrastructure rehearsal
+- Terraform/OpenTofu rehearsal
 - lifecycle observability for apply/destroy, not application correctness
+- no provider-service model in the intended architecture
 
 Not implemented yet:
 - broad backend coverage
-- multiple scenario families
+- provider-agnostic CLI cleanup of legacy AWS-specific naming
+- removal of legacy provider-service-aware runtime abstractions
 - application-level verification
+
+Strict boundary:
+- `dress-rehearsal` should operate Terraform/OpenTofu and generic rehearsal
+  mechanics only
+- cloud providers must be driven by Terraform/OpenTofu itself, not by
+  provider-service-aware logic in `dress-rehearsal`
+- any current AWS-specific naming in the codebase is legacy implementation debt,
+  not intended product scope
 
 ## Install
 

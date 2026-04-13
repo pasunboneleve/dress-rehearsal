@@ -44,7 +44,8 @@ Future room: CloudFormation.
 
 ### `Scenario`
 
-Owns the minimal rehearsal contract for a target:
+If retained at all, owns only a minimal provider-agnostic contract around a
+Terraform/OpenTofu rehearsal:
 - prerequisite checks
 - backend input shaping when needed
 - discovery of backend-managed outputs when needed
@@ -52,12 +53,8 @@ Owns the minimal rehearsal contract for a target:
 A scenario does not own:
 - direct cloud-service lifecycle control
 - service-specific teardown commands
+- provider-service concepts or service families
 - application-level correctness checks
-
-Examples:
-- AWS ECS Express infrastructure rehearsal
-- AWS Lambda Function URL
-- GCP Cloud Run HTTP service
 
 ### `VerificationSpec`
 
@@ -111,15 +108,15 @@ enough to support iterative development rather than broad platform coverage.
 - no YAML DSL
 - no automatic inference of arbitrary infrastructure layouts
 - no coupling to `devloop` in the core architecture
+- no provider-service model inside `dress-rehearsal`
 
 ## Early Shape
 
-The first implementation path should move one real happy path through these
-boundaries:
+The first implementation path should move one real Terraform/OpenTofu happy path
+through these boundaries:
 
 Initial concrete target:
 - backend: Terraform/OpenTofu
-- scenario: AWS ECS Express infrastructure rehearsal
 - verification: lifecycle observability only
 
 Execution path:
@@ -142,13 +139,21 @@ Execution path:
 - The first version treats backend apply/destroy as the rehearsal boundary.
 - Failures must be diagnosable from preserved step logs, summaries, and backend artifacts.
 - The harness must not issue direct cloud-service lifecycle commands outside the backend contract.
+- The harness must not model provider services or require provider-service
+  concepts in order to run Terraform/OpenTofu.
 
 ## Boundary Notes
 
+- Terraform/OpenTofu is the sole cloud-facing control surface. Cloud-provider
+  APIs should be reached only through Terraform/OpenTofu providers, not through
+  provider-aware orchestration in `dress-rehearsal`.
 - Scenario bootstrap remains inside `ScenarioPreparation`: it may add
   prerequisite steps and scenario-owned cleanup actions before backend
   initialization, but it must not implicitly register backend cleanup or
   reshape teardown order across that boundary.
+- Any temporary scenario-like abstraction must remain generic to backend
+  invocation. Provider-service targets such as ECS services or Lambda functions
+  are outside the intended architecture.
 - Verification wiring begins only after `Scenario::discover` receives backend
   outputs. Changing verification labels, metadata, requests, or assertions must
   not change deployment inputs or cleanup ordering.
@@ -205,13 +210,13 @@ Execution path:
 
 ### One scenario family
 
-- Current limitation: the first concrete scenario is AWS ECS Express, and the
-  scenario boundary is still shaped around one real rehearsal path.
-- Justification: the codebase is intentionally moving one happy path first so
-  orchestration semantics stabilize before more target-specific concerns are
-  introduced.
-- Future extraction point: extract only the behavior that survives a second
-  scenario with materially different prerequisite or discovery needs.
+- Current limitation: the runtime still contains a legacy provider-service-aware
+  scenario layer, even though the intended design is provider-agnostic.
+- Justification: this is explicit design debt, not endorsed scope. It is being
+  tracked for removal while preserving the Terraform/OpenTofu rehearsal core.
+- Future extraction point: either remove the abstraction entirely or narrow it
+  to generic backend preparation and output handling with no provider-service
+  vocabulary.
 
 ### Verification stays observational
 

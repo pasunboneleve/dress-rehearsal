@@ -89,6 +89,22 @@ The architecture should preserve these concepts:
 - `Scenario`
 - `VerificationSpec`
 
+### Strict provider boundary
+
+`dress-rehearsal` orchestrates Terraform/OpenTofu execution and generic
+rehearsal mechanics only.
+
+It must not:
+- model provider services such as ECS, Lambda, Cloud Run, or similar
+- encode service-specific lifecycle concepts in the CLI or core abstractions
+- require provider-service identifiers or provider-service runtime commands
+- perform provider-specific discovery that Terraform/OpenTofu should handle
+
+If a `Scenario` abstraction remains, it is only a narrow, provider-agnostic
+way to express generic prerequisites, backend inputs, and generic output or
+artifact handling around Terraform/OpenTofu. It must not become a provider
+service model.
+
 ### Plugin architecture, but narrow
 
 This project supports pluggable internal abstractions for:
@@ -98,13 +114,6 @@ This project supports pluggable internal abstractions for:
 Examples:
 - Terraform/OpenTofu
 - CloudFormation
-
-#### Scenarios
-
-Examples:
-- AWS ECS Express HTTP service
-- AWS Lambda Function URL
-- GCP Cloud Run HTTP service
 
 Use internal Rust traits/modules.
 Do not build dynamic plugin loading.
@@ -117,7 +126,8 @@ A `Scenario` is not just:
 - a list of scripts
 - a shell pipeline
 
-A `Scenario` is the target-specific rehearsal contract:
+A `Scenario` is, at most, a provider-agnostic rehearsal contract around the
+Terraform/OpenTofu run:
 - prerequisite checks
 - backend input shaping
 - backend output discovery when needed
@@ -130,6 +140,7 @@ For the first version, a `Scenario` must remain narrow:
 A `Scenario` must not:
 - issue direct cloud-service lifecycle commands
 - own service-specific deploy, scale, or drain behavior
+- model provider services or service families
 - perform application-level verification such as HTTP health checks
 
 ## Scope Discipline
@@ -141,8 +152,9 @@ Do not build:
 - a plugin marketplace
 - support for hypothetical future use cases before real demand
 - cloud-service lifecycle orchestration outside `DeploymentBackend`
-- application correctness checks into the first AWS scenario
-- service-specific lifecycle contracts such as ECS cluster/service draining
+- provider-service-aware scenarios or service taxonomies
+- application correctness checks into the first Terraform/OpenTofu path
+- service-specific lifecycle contracts of any kind
 
 Do build:
 - a small, explicit infrastructure rehearsal engine
@@ -211,7 +223,7 @@ Before merging a change, ask:
 - Does cleanup become more guaranteed or less?
 - Does verification become more explicit or more procedural?
 - Does this keep lifecycle control inside the deployment backend?
-- Does this avoid coupling the first scenario to service-specific runtime commands?
+- Does this avoid coupling the tool to provider-service runtime commands?
 - Does verification stay focused on lifecycle success/failure and diagnosability?
 - Would a second backend or scenario fit without reshaping the core?
 - Is this abstraction demanded by real behavior, or invented too early?
@@ -220,7 +232,8 @@ Before merging a change, ask:
 
 ## First-Version Boundary
 
-The first AWS path is a lifecycle rehearsal, not a service test harness.
+The first path is a Terraform/OpenTofu lifecycle rehearsal, not a provider
+service test harness.
 
 Allowed:
 - Terraform/OpenTofu apply
@@ -230,9 +243,9 @@ Allowed:
 - artifact and log preservation
 
 Not allowed:
-- direct AWS service lifecycle commands such as `aws ecs update-service`
+- direct provider service lifecycle commands
 - runtime health checks, HTTP assertions, or readiness polling
-- requiring service-specific identifiers for lifecycle control outside backend destroy
+- requiring provider-service identifiers for lifecycle control outside backend destroy
 
 ## Naming
 

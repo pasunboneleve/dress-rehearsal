@@ -27,14 +27,13 @@ Goal:
 Goal:
 - isolate deployment engine behavior behind a narrow contract
 
-## Phase 4: Scenario abstraction
+## Phase 4: Narrow input abstraction
 
 - define `Scenario`
-- sketch AWS ECS Express scenario boundary
+- keep any orchestration-side input abstraction generic to Terraform/OpenTofu
 
 Goal:
-- keep target-specific setup, discovery, and verification wiring out of
-  orchestration
+- keep provider-service concerns out of orchestration entirely
 
 ## Phase 5: Verification model
 
@@ -45,10 +44,9 @@ Goal:
 Goal:
 - make failure evidence explicit without expanding into service correctness checks
 
-## Phase 6: First AWS happy path
+## Phase 6: First Terraform/OpenTofu happy path
 
 - Terraform/OpenTofu backend
-- AWS ECS Express scenario
 - apply, artifact capture, destroy through the new abstractions
 
 Goal:
@@ -70,8 +68,9 @@ Goal:
 
 - CloudFormation backend implementation
 - dynamic plugins
-- multiple scenario families at once
-- broad generic machinery before the AWS path works cleanly
+- multiple provider-service families
+- broad generic machinery before the Terraform/OpenTofu path works cleanly
 - direct cloud-service lifecycle commands outside backend apply/destroy
+- provider-service-aware orchestration inside `dress-rehearsal`
 - application-level verification such as HTTP health checks or readiness polling
 - service-specific lifecycle control contracts

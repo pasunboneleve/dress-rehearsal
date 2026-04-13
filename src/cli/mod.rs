@@ -37,7 +37,10 @@ fn run_smoke_aws_ecs() -> Result<i32, String> {
 
     dress_log("starting aws-ecs-express rehearsal");
     dress_log(format!("runs root {}", config.runs_root.display()));
-    dress_log(format!("deployment root {}", config.deployment_root.display()));
+    dress_log(format!(
+        "deployment root {}",
+        config.deployment_root.display()
+    ));
 
     match rehearse(&config.runs_root, &backend, &scenario, &runner) {
         RehearsalOutcome::Succeeded(success) => {

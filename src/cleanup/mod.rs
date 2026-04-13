@@ -129,13 +129,13 @@ impl CleanupManager {
             }
 
             let result = Self::run_action(runner, action);
-            if result.is_failed() {
-                if let Some(hint) = action.recovery_hint_text() {
-                    report.recovery_hints.push(RecoveryHint {
-                        action_name: action.name().to_string(),
-                        hint: hint.to_string(),
-                    });
-                }
+            if result.is_failed()
+                && let Some(hint) = action.recovery_hint_text()
+            {
+                report.recovery_hints.push(RecoveryHint {
+                    action_name: action.name().to_string(),
+                    hint: hint.to_string(),
+                });
             }
             report.results.push(result);
         }

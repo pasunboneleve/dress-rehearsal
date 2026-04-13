@@ -320,15 +320,21 @@ impl StepRunner {
             .stderr
             .take()
             .expect("child stderr should be available when piped");
-        let stdout_handle = spawn_stream_tee(stdout, artifact_files.stdout_file, StreamTarget::Stdout);
-        let stderr_handle = spawn_stream_tee(stderr, artifact_files.stderr_file, StreamTarget::Stderr);
+        let stdout_handle =
+            spawn_stream_tee(stdout, artifact_files.stdout_file, StreamTarget::Stdout);
+        let stderr_handle =
+            spawn_stream_tee(stderr, artifact_files.stderr_file, StreamTarget::Stderr);
         let exit_status = process.wait().map_err(|source| StepError::Spawn {
             step_name: command.name().clone(),
             command: command.display_command(),
             source,
         })?;
-        let stdout = stdout_handle.join().expect("stdout tee thread should not panic");
-        let stderr = stderr_handle.join().expect("stderr tee thread should not panic");
+        let stdout = stdout_handle
+            .join()
+            .expect("stdout tee thread should not panic");
+        let stderr = stderr_handle
+            .join()
+            .expect("stderr tee thread should not panic");
         let stdout = stdout.map_err(|source| StepError::Spawn {
             step_name: command.name().clone(),
             command: command.display_command(),
@@ -782,8 +788,8 @@ fn human_duration(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{StepCommand, StepError, StepEvent, StepEventSink, StepRunner, StepTerminalStatus};
     use super::human_duration;
+    use super::{StepCommand, StepError, StepEvent, StepEventSink, StepRunner, StepTerminalStatus};
     use std::env;
     use std::time::Duration;
 
@@ -883,18 +889,21 @@ mod tests {
     #[test]
     fn applies_explicit_environment_and_working_directory() {
         let runner = StepRunner::new();
+        let expected_dir = env::temp_dir();
         let command = shell_command("printf '%s:%s' \"$STEP_VALUE\" \"$PWD\"")
             .with_env("STEP_VALUE", "configured")
-            .with_current_dir(env::temp_dir());
+            .with_current_dir(&expected_dir);
 
         let outcome = runner.run_command(&command).expect("step should succeed");
+        let stdout = outcome.stdout_text();
+        let (_, reported_dir) = stdout
+            .split_once(':')
+            .expect("stdout should contain configured directory output");
+        let reported_dir = std::fs::canonicalize(reported_dir).expect("reported directory");
+        let expected_dir = std::fs::canonicalize(expected_dir).expect("expected directory");
 
         assert!(outcome.stdout_text().starts_with("configured:"));
-        assert!(
-            outcome
-                .stdout_text()
-                .contains(&env::temp_dir().display().to_string())
-        );
+        assert_eq!(reported_dir, expected_dir);
         assert_eq!(runner.recorded_events().len(), 2);
     }
 

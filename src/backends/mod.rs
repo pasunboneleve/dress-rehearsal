@@ -180,7 +180,7 @@ pub enum BackendError {
     Step {
         backend_name: String,
         operation: &'static str,
-        source: StepError,
+        source: Box<StepError>,
     },
     OutputFormat {
         backend_name: String,
@@ -216,7 +216,7 @@ impl BackendError {
         Self::Step {
             backend_name: backend_name.into(),
             operation,
-            source,
+            source: Box::new(source),
         }
     }
 

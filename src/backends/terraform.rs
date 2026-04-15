@@ -36,7 +36,7 @@ pub enum TerraformExecutionMode {
 }
 
 impl TerraformExecutionMode {
-    fn is_isolated(self) -> bool {
+    pub fn is_isolated(self) -> bool {
         matches!(self, Self::Isolated)
     }
 }

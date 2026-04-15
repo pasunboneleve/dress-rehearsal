@@ -1,7 +1,7 @@
 use crate::backends::terraform::{
     TerraformBackend, TerraformBackendConfig, TerraformBinary, TerraformExecutionMode,
 };
-use crate::core::{RehearsalOutcome, rehearse};
+use crate::core::{RehearsalFailure, RehearsalOutcome, rehearse};
 use crate::scenarios::backend_rehearsal::{
     BackendRehearsalScenario, BackendRehearsalScenarioConfig,
 };
@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process;
 
@@ -127,7 +127,7 @@ fn run_backend_rehearsal(options: RehearsalOptions) -> Result<i32, String> {
                 failure.run_context().root_dir().display()
             ));
             dress_log(format!("failure during {}", failure.stage()));
-            dress_log(format!("error {}", failure.error()));
+            dress_log_failure_error(&failure);
             if let Some(summary_path) = failure.summary_path() {
                 dress_log(format!("summary {}", summary_path.display()));
             }
@@ -304,6 +304,15 @@ fn dress_log(message: impl AsRef<str>) {
     }
 }
 
+fn dress_log_failure_error(failure: &RehearsalFailure) {
+    let message = failure.error().to_string();
+    if failure_summary_should_use_warning_style(&message, failure.failed_step_stderr_path()) {
+        dress_log_warning_full_line(format!("error {message}"));
+    } else {
+        dress_log(format!("error {message}"));
+    }
+}
+
 fn print_lines(message: &str) {
     for line in message.lines() {
         println!("{line}");
@@ -324,12 +333,61 @@ fn dress_log_warning(message: impl AsRef<str>) {
     }
 }
 
+fn dress_log_warning_full_line(message: impl AsRef<str>) {
+    let is_terminal = io::stderr().is_terminal();
+    for line in message.as_ref().lines() {
+        if is_terminal {
+            eprintln!("{} {}", dress_prefix_warning(), line.yellow().bold());
+        } else {
+            eprintln!("{} {}", dress_prefix_warning(), line);
+        }
+    }
+}
+
 fn dress_prefix_warning() -> String {
     if io::stderr().is_terminal() {
         format!("{}", "[dress]".yellow().bold())
     } else {
         "[dress]".to_string()
     }
+}
+
+fn failure_summary_should_use_warning_style(
+    message: &str,
+    failed_step_stderr_path: Option<&std::path::Path>,
+) -> bool {
+    failure_error_looks_like_existing_resource_conflict(message)
+        || failed_step_stderr_path_looks_like_existing_resource_conflict(failed_step_stderr_path)
+}
+
+fn failure_error_looks_like_existing_resource_conflict(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("already exists") || normalized.contains("entityalreadyexists")
+}
+
+fn failed_step_stderr_path_looks_like_existing_resource_conflict(
+    stderr_path: Option<&std::path::Path>,
+) -> bool {
+    let Some(stderr_path) = stderr_path else {
+        return false;
+    };
+
+    match read_stderr_excerpt(stderr_path, 64 * 1024) {
+        Ok(stderr) => failure_error_looks_like_existing_resource_conflict(&stderr),
+        Err(_) => false,
+    }
+}
+
+fn read_stderr_excerpt(path: &std::path::Path, max_bytes: u64) -> io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let file_len = file.metadata()?.len();
+    let start = file_len.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))?;
+
+    let mut buffer = Vec::new();
+    file.take(max_bytes).read_to_end(&mut buffer)?;
+
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 fn usage_text() -> &'static str {
@@ -445,10 +503,14 @@ fn help_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandSelection, RehearsalOptions, SmokeEnvironment, help_text, load_smoke_config,
-        run_inner, select_command, terraform_binary_from_env, version_text,
+        CommandSelection, RehearsalOptions, SmokeEnvironment,
+        failed_step_stderr_path_looks_like_existing_resource_conflict,
+        failure_error_looks_like_existing_resource_conflict,
+        failure_summary_should_use_warning_style, help_text, load_smoke_config, run_inner,
+        select_command, terraform_binary_from_env, version_text,
     };
     use crate::backends::terraform::{TerraformBinary, TerraformExecutionMode};
+    use crate::test_support::TestDir;
     use std::env;
     use std::path::PathBuf;
 
@@ -584,11 +646,8 @@ mod tests {
 
     #[test]
     fn disable_isolation_flag_is_parsed() {
-        let selection = select_command(&[
-            "dress".to_string(),
-            "--disable-isolation".to_string(),
-        ])
-        .expect("disable-isolation flag should parse");
+        let selection = select_command(&["dress".to_string(), "--disable-isolation".to_string()])
+            .expect("disable-isolation flag should parse");
 
         assert!(matches!(
             selection,
@@ -655,5 +714,52 @@ mod tests {
             .expect("config should load");
 
         assert!(!config.backend_config.execution_mode().is_isolated());
+    }
+
+    #[test]
+    fn failure_with_failed_step_stderr_path_is_warning_colored() {
+        let temp_dir =
+            TestDir::new("cli-tests", "failure-classifier").expect("temp dir should exist");
+        let stderr_path = temp_dir.path().join("terraform.stderr.log");
+
+        assert!(failure_summary_should_use_warning_style(
+            "backend `terraform` step failed during deploy: Requested entity already exists",
+            None
+        ));
+        assert!(!failure_summary_should_use_warning_style(
+            "backend `terraform` step failed during deploy: exit status: 1",
+            None
+        ));
+        std::fs::write(
+            &stderr_path,
+            "googleapi: Error 409: Requested entity already exists",
+        )
+        .expect("stderr fixture should write");
+        assert!(
+            failed_step_stderr_path_looks_like_existing_resource_conflict(Some(
+                stderr_path.as_path()
+            ))
+        );
+        assert!(failure_summary_should_use_warning_style(
+            "backend `terraform` step failed during deploy: step `terraform-apply` exited unsuccessfully: exit status: 1",
+            Some(stderr_path.as_path())
+        ));
+        assert!(!failed_step_stderr_path_looks_like_existing_resource_conflict(None));
+    }
+
+    #[test]
+    fn existing_resource_conflicts_are_classified_by_text() {
+        assert!(failure_error_looks_like_existing_resource_conflict(
+            "Requested entity already exists"
+        ));
+        assert!(failure_error_looks_like_existing_resource_conflict(
+            "Error 409: resource already exists"
+        ));
+        assert!(failure_error_looks_like_existing_resource_conflict(
+            "EntityAlreadyExists"
+        ));
+        assert!(!failure_error_looks_like_existing_resource_conflict(
+            "exit status: 1"
+        ));
     }
 }

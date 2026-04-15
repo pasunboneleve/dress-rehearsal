@@ -7,6 +7,8 @@ use crate::steps::{StepCommand, StepRunner};
 use serde_json::Value;
 use std::fs;
 use std::io;
+#[cfg(unix)]
+use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -218,18 +220,19 @@ impl TerraformBackend {
         request: &BackendRequest,
     ) -> Result<BackendRequest, BackendError> {
         if !self.config.execution_mode().is_isolated() {
-            return Ok(clone_request(request));
+            return Ok(request.clone());
         }
 
         let workspace_root = self.isolated_workspace_root(run_context);
         copy_deployment_tree(request.deployment_root(), &workspace_root)
             .map_err(|source| BackendError::io(self.name(), "initialize", source))?;
 
-        let mut isolated_request = BackendRequest::new(&workspace_root)
-            .with_env("TF_VAR_dress_run_id", run_context.run_id().to_string());
+        let mut isolated_request = BackendRequest::new(&workspace_root);
         for (key, value) in request.environment() {
             isolated_request = isolated_request.with_env(key.clone(), value.clone());
         }
+        isolated_request =
+            isolated_request.with_env("TF_VAR_dress_run_id", run_context.run_id().to_string());
 
         let isolated_working_directory = match request.working_directory() {
             Some(working_directory) => {
@@ -346,17 +349,6 @@ fn render_output_value(value: &Value) -> String {
     }
 }
 
-fn clone_request(request: &BackendRequest) -> BackendRequest {
-    let mut cloned = BackendRequest::new(request.deployment_root());
-    if let Some(working_directory) = request.working_directory() {
-        cloned = cloned.with_working_directory(working_directory);
-    }
-    for (key, value) in request.environment() {
-        cloned = cloned.with_env(key.clone(), value.clone());
-    }
-    cloned
-}
-
 fn copy_deployment_tree(source: &Path, destination: &Path) -> io::Result<()> {
     fs::create_dir_all(destination)?;
 
@@ -372,7 +364,9 @@ fn copy_deployment_tree(source: &Path, destination: &Path) -> io::Result<()> {
             continue;
         }
 
-        if entry_type.is_dir() {
+        if entry_type.is_symlink() {
+            copy_symlink(&source_path, &destination_path)?;
+        } else if entry_type.is_dir() {
             copy_deployment_tree(&source_path, &destination_path)?;
         } else if entry_type.is_file() {
             fs::copy(&source_path, &destination_path)?;
@@ -387,6 +381,20 @@ fn copy_deployment_tree(source: &Path, destination: &Path) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn copy_symlink(source: &Path, destination: &Path) -> io::Result<()> {
+    let link_target = fs::read_link(source)?;
+    unix_fs::symlink(link_target, destination)
+}
+
+#[cfg(not(unix))]
+fn copy_symlink(source: &Path, _destination: &Path) -> io::Result<()> {
+    Err(io::Error::other(format!(
+        "isolated rehearsal does not support symlinks on this platform: {}",
+        source.display()
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -398,6 +406,8 @@ mod tests {
     use std::env;
     use std::fs;
     use std::io;
+    #[cfg(unix)]
+    use std::os::unix::fs as unix_fs;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -573,6 +583,41 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn isolated_workspace_preserves_symlink_entries() -> io::Result<()> {
+        let temp_dir = TestDir::new("symlink-copy")?;
+        let run_context =
+            RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-terraform-symlink"));
+        let scenario_root = temp_dir.path().join("scenario");
+        let linked_target = scenario_root.join("shared.tfvars");
+        fs::create_dir_all(&scenario_root)?;
+        fs::write(&linked_target, "name = \"dress\"\n")?;
+        unix_fs::symlink("shared.tfvars", scenario_root.join("terraform.tfvars"))?;
+        run_context.materialize()?;
+
+        let backend = TerraformBackend::new(TerraformBackendConfig::default().with_binary(
+            TerraformBinary::Custom(platform_true_binary().to_path_buf()),
+        ));
+        let session = backend
+            .initialize(
+                &run_context,
+                &BackendRequest::new(&scenario_root),
+                &StepRunner::new(),
+            )
+            .map_err(io::Error::other)?;
+
+        let copied_link = session.deployment_root().join("terraform.tfvars");
+        let copied_target = fs::read_link(&copied_link)?;
+        assert_eq!(copied_target, PathBuf::from("shared.tfvars"));
+        assert_eq!(
+            fs::read_to_string(session.deployment_root().join("shared.tfvars"))?,
+            "name = \"dress\"\n"
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn isolated_commands_use_local_state_and_disable_remote_backend() {
         let backend = TerraformBackend::new(TerraformBackendConfig::default());
@@ -597,6 +642,32 @@ mod tests {
         assert!(apply_command.args().contains(&state_arg));
         assert!(output_command.args().contains(&state_arg));
         assert!(destroy_command.args().contains(&state_arg));
+    }
+
+    #[test]
+    fn isolated_rehearsal_overrides_incoming_run_id_overlay() -> io::Result<()> {
+        let temp_dir = TestDir::new("run-id-override")?;
+        let run_context =
+            RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-terraform-override"));
+        let scenario_root = temp_dir.path().join("scenario");
+        fs::create_dir_all(&scenario_root)?;
+        fs::write(scenario_root.join("main.tf"), "terraform {}\n")?;
+        run_context.materialize()?;
+
+        let backend = TerraformBackend::new(TerraformBackendConfig::default().with_binary(
+            TerraformBinary::Custom(platform_true_binary().to_path_buf()),
+        ));
+        let request = BackendRequest::new(&scenario_root).with_env("TF_VAR_dress_run_id", "wrong");
+        let session = backend
+            .initialize(&run_context, &request, &StepRunner::new())
+            .map_err(io::Error::other)?;
+
+        assert_eq!(
+            session.environment().get("TF_VAR_dress_run_id"),
+            Some(&"run-fixed-terraform-override".to_string())
+        );
+
+        Ok(())
     }
 
     #[test]

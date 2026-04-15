@@ -21,10 +21,12 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 
 ### Changed
 - Backend configuration shaping is now fully owned by the Terraform/OpenTofu
-  backend. In isolated mode, `-backend=false` is used automatically; in
-  non-isolated mode, user-provided config files are passed via `-backend-config`.
-- Workspace copying in isolated mode now excludes `.terraform`, `.git`, and
-  `.dress-runs` directories to avoid polluting the run-scoped workspace.
+  backend. In isolated mode, a `dress_backend_override.tf` file forces local
+  backend; in non-isolated mode, user-provided config files are passed via
+  `-backend-config`.
+- Workspace copying in isolated mode now excludes `.terraform`, `.git`,
+  `.dress-runs`, `backend.auto.hcl`, and `*.auto.tfbackend` files to avoid
+  polluting the run-scoped workspace and prevent backend config conflicts.
 - Transient state files are now stored exclusively under the run-scoped
   `.dress-runs/<run-id>/` directory, never in the user's deployment directory.
 

@@ -4,6 +4,10 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 
 ## [Unreleased]
 
+### Changed
+- Release publishing now uses `softprops/action-gh-release@v3`, which is
+  compatible with the GitHub Actions Node 24 runtime.
+
 ## [0.3.0] - 2026-04-15
 
 ### Added

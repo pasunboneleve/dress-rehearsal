@@ -634,4 +634,26 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn load_smoke_config_applies_isolated_execution_mode() {
+        let environment =
+            SmokeEnvironment::default().with_var("DRESS_DEPLOYMENT_ROOT", "/tmp/deploy");
+
+        let config = load_smoke_config(&environment, TerraformExecutionMode::Isolated)
+            .expect("config should load");
+
+        assert!(config.backend_config.execution_mode().is_isolated());
+    }
+
+    #[test]
+    fn load_smoke_config_applies_non_isolated_execution_mode() {
+        let environment =
+            SmokeEnvironment::default().with_var("DRESS_DEPLOYMENT_ROOT", "/tmp/deploy");
+
+        let config = load_smoke_config(&environment, TerraformExecutionMode::NonIsolated)
+            .expect("config should load");
+
+        assert!(!config.backend_config.execution_mode().is_isolated());
+    }
 }

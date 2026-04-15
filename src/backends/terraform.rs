@@ -761,6 +761,69 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn non_isolated_mode_uses_original_working_directory() -> io::Result<()> {
+        let temp_dir = TestDir::new("non-isolated-workdir")?;
+        let run_context =
+            RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-non-isolated"));
+        let scenario_root = temp_dir.path().join("scenario");
+        fs::create_dir_all(&scenario_root)?;
+        fs::write(scenario_root.join("main.tf"), "terraform {}\n")?;
+        run_context.materialize()?;
+
+        let backend = TerraformBackend::new(
+            TerraformBackendConfig::default()
+                .with_binary(TerraformBinary::Custom(platform_true_binary().to_path_buf()))
+                .with_execution_mode(TerraformExecutionMode::NonIsolated),
+        );
+        let request = BackendRequest::new(&scenario_root);
+        let session = backend
+            .initialize(&run_context, &request, &StepRunner::new())
+            .map_err(io::Error::other)?;
+
+        // Non-isolated mode should use the original working directory, not a copy
+        assert_eq!(session.working_directory(), scenario_root);
+        // Non-isolated mode should not inject TF_VAR_dress_run_id
+        assert!(!session.environment().contains_key("TF_VAR_dress_run_id"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn non_isolated_mode_does_not_copy_workspace() -> io::Result<()> {
+        let temp_dir = TestDir::new("non-isolated-no-copy")?;
+        let run_context = RunContext::with_run_id(
+            temp_dir.path(),
+            RunId::new("run-fixed-non-isolated-no-copy"),
+        );
+        let scenario_root = temp_dir.path().join("scenario");
+        fs::create_dir_all(&scenario_root)?;
+        fs::write(scenario_root.join("main.tf"), "terraform {}\n")?;
+        run_context.materialize()?;
+
+        let backend = TerraformBackend::new(
+            TerraformBackendConfig::default()
+                .with_binary(TerraformBinary::Custom(platform_true_binary().to_path_buf()))
+                .with_execution_mode(TerraformExecutionMode::NonIsolated),
+        );
+        let request = BackendRequest::new(&scenario_root);
+        let session = backend
+            .initialize(&run_context, &request, &StepRunner::new())
+            .map_err(io::Error::other)?;
+
+        // Non-isolated mode should use original deployment root
+        assert_eq!(session.deployment_root(), scenario_root);
+        // Workspace copy directory should not exist
+        let would_be_workspace = run_context
+            .work_dir()
+            .join("backends")
+            .join("terraform")
+            .join("workspace");
+        assert!(!would_be_workspace.exists());
+
+        Ok(())
+    }
+
     fn backend_session(run_id: &str) -> BackendSession {
         let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new(run_id));
         let request = BackendRequest::new("/tmp/scenario").with_working_directory("/tmp/scenario");

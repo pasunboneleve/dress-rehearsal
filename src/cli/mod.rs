@@ -735,9 +735,11 @@ mod tests {
             "googleapi: Error 409: Requested entity already exists",
         )
         .expect("stderr fixture should write");
-        assert!(failed_step_stderr_path_looks_like_existing_resource_conflict(
-            Some(stderr_path.as_path())
-        ));
+        assert!(
+            failed_step_stderr_path_looks_like_existing_resource_conflict(Some(
+                stderr_path.as_path()
+            ))
+        );
         assert!(failure_summary_should_use_warning_style(
             "backend `terraform` step failed during deploy: step `terraform-apply` exited unsuccessfully: exit status: 1",
             Some(stderr_path.as_path())

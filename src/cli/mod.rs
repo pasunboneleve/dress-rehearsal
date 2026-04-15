@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process;
 
@@ -379,11 +379,15 @@ fn failed_step_stderr_path_looks_like_existing_resource_conflict(
 }
 
 fn read_stderr_excerpt(path: &std::path::Path, max_bytes: u64) -> io::Result<String> {
-    let mut buffer = String::new();
-    let file = std::fs::File::open(path)?;
-    let mut limited = io::Read::take(file, max_bytes);
-    io::Read::read_to_string(&mut limited, &mut buffer)?;
-    Ok(buffer)
+    let mut file = std::fs::File::open(path)?;
+    let file_len = file.metadata()?.len();
+    let start = file_len.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))?;
+
+    let mut buffer = Vec::new();
+    file.take(max_bytes).read_to_end(&mut buffer)?;
+
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 fn usage_text() -> &'static str {
@@ -506,7 +510,7 @@ mod tests {
         select_command, terraform_binary_from_env, version_text,
     };
     use crate::backends::terraform::{TerraformBinary, TerraformExecutionMode};
-    use crate::context::RunId;
+    use crate::test_support::TestDir;
     use std::env;
     use std::path::PathBuf;
 
@@ -714,11 +718,9 @@ mod tests {
 
     #[test]
     fn failure_with_failed_step_stderr_path_is_warning_colored() {
-        let temp_dir = env::temp_dir().join(format!(
-            "dress-cli-failure-classifier-{}",
-            RunId::generate().as_str()
-        ));
-        let stderr_path = temp_dir.join("terraform.stderr.log");
+        let temp_dir =
+            TestDir::new("cli-tests", "failure-classifier").expect("temp dir should exist");
+        let stderr_path = temp_dir.path().join("terraform.stderr.log");
 
         assert!(failure_summary_should_use_warning_style(
             "backend `terraform` step failed during deploy: Requested entity already exists",
@@ -728,7 +730,6 @@ mod tests {
             "backend `terraform` step failed during deploy: exit status: 1",
             None
         ));
-        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
         std::fs::write(
             &stderr_path,
             "googleapi: Error 409: Requested entity already exists",

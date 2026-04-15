@@ -227,13 +227,6 @@ impl TerraformBackend {
         copy_deployment_tree(request.deployment_root(), &workspace_root)
             .map_err(|source| BackendError::io(self.name(), "initialize", source))?;
 
-        let mut isolated_request = BackendRequest::new(&workspace_root);
-        for (key, value) in request.environment() {
-            isolated_request = isolated_request.with_env(key.clone(), value.clone());
-        }
-        isolated_request =
-            isolated_request.with_env("TF_VAR_dress_run_id", run_context.run_id().to_string());
-
         let isolated_working_directory = match request.working_directory() {
             Some(working_directory) => {
                 let relative_path = working_directory.strip_prefix(request.deployment_root()).map_err(|_| {
@@ -250,7 +243,15 @@ impl TerraformBackend {
             None => workspace_root.clone(),
         };
 
-        Ok(isolated_request.with_working_directory(isolated_working_directory))
+        let mut isolated_request =
+            BackendRequest::new(&workspace_root).with_working_directory(isolated_working_directory);
+        for (key, value) in request.environment() {
+            isolated_request = isolated_request.with_env(key.clone(), value.clone());
+        }
+        isolated_request =
+            isolated_request.with_env("TF_VAR_dress_run_id", run_context.run_id().to_string());
+
+        Ok(isolated_request)
     }
 
     fn parse_outputs(&self, output_json: &str) -> Result<BackendOutputs, BackendError> {
@@ -360,7 +361,7 @@ fn copy_deployment_tree(source: &Path, destination: &Path) -> io::Result<()> {
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
 
-        if file_name == ".terraform" || file_name == ".dress-runs" {
+        if file_name == ".terraform" || file_name == ".dress-runs" || file_name == ".git" {
             continue;
         }
 
@@ -548,7 +549,9 @@ mod tests {
             "name = \"dress\"\n",
         )?;
         fs::create_dir_all(scenario_root.join(".terraform"))?;
+        fs::create_dir_all(scenario_root.join(".git"))?;
         fs::write(scenario_root.join(".terraform").join("ignore-me"), "cache")?;
+        fs::write(scenario_root.join(".git").join("config"), "[core]\n")?;
         run_context.materialize()?;
 
         let backend = TerraformBackend::new(TerraformBackendConfig::default().with_binary(
@@ -576,6 +579,7 @@ mod tests {
             "name = \"dress\"\n"
         );
         assert!(!session.deployment_root().join(".terraform").exists());
+        assert!(!session.deployment_root().join(".git").exists());
         assert_eq!(
             session.environment().get("TF_VAR_dress_run_id"),
             Some(&"run-fixed-terraform-init".to_string())

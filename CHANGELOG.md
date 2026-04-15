@@ -32,6 +32,11 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 - Fixed terminal detection for `--disable-isolation` confirmation to check both
   stdin and stderr, preventing blocking when stdin is redirected but stderr is
   a terminal.
+- Fixed isolated mode to work with modules that have remote backend
+  configurations (GCS, S3, etc.) by generating a `dress_backend_override.tf`
+  file that forces local backend. Previously, `terraform init -backend=false`
+  was insufficient because apply/destroy would still detect the unconfigured
+  remote backend.
 
 ## [0.2.0] - 2026-04-15
 

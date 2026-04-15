@@ -116,6 +116,20 @@ Operationally, this means the backend should construct child-process execution
 that behaves like a local-state rehearsal even when the source module normally
 uses a remote backend.
 
+The implementation generates a `dress_backend_override.tf` file in the isolated
+workspace that contains:
+
+```hcl
+terraform {
+  backend "local" {}
+}
+```
+
+This override file takes precedence over any backend block in the original HCL,
+forcing Terraform/OpenTofu to use local state regardless of what the module
+normally configures. The `-state=<path>` flag then directs that local state to
+the run-scoped state file.
+
 The initial implementation should be conservative:
 
 - fail closed if the backend cannot establish isolated local-state execution

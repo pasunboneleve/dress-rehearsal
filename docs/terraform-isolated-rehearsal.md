@@ -178,6 +178,9 @@ Rules:
 - never mutate the parent shell
 - preserve incoming `TF_VAR_*` values unless explicitly shadowed by
   rehearsal-specific values
+- scrub ambient Terraform/OpenTofu backend-shaping environment that would break
+  isolated local-backend execution, such as `TF_CLI_ARGS_init`, `TF_CLI_ARGS`,
+  `TF_DATA_DIR`, or `TF_WORKSPACE`
 - preserve explicit backend request environment values
 - add backend-owned rehearsal overlays only to the child process environment
 - record derived non-secret environment decisions in run artifacts or metadata

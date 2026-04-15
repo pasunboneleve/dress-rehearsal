@@ -1,7 +1,7 @@
 //! StepRunner and step execution semantics belong here.
 
 use owo_colors::OwoColorize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, IsTerminal, Read, Write};
@@ -39,6 +39,7 @@ pub struct StepCommand {
     args: Vec<String>,
     current_dir: Option<PathBuf>,
     environment: BTreeMap<String, String>,
+    removed_environment: BTreeSet<String>,
 }
 
 impl StepCommand {
@@ -49,6 +50,7 @@ impl StepCommand {
             args: Vec::new(),
             current_dir: None,
             environment: BTreeMap::new(),
+            removed_environment: BTreeSet::new(),
         }
     }
 
@@ -70,6 +72,10 @@ impl StepCommand {
 
     pub fn environment(&self) -> &BTreeMap<String, String> {
         &self.environment
+    }
+
+    pub fn removed_environment(&self) -> &BTreeSet<String> {
+        &self.removed_environment
     }
 
     pub fn arg(mut self, arg: impl Into<String>) -> Self {
@@ -96,6 +102,11 @@ impl StepCommand {
         self
     }
 
+    pub fn without_env(mut self, key: impl Into<String>) -> Self {
+        self.removed_environment.insert(key.into());
+        self
+    }
+
     pub fn display_command(&self) -> String {
         let mut rendered = render_shell_token(&self.program.display().to_string());
         for arg in &self.args {
@@ -111,6 +122,10 @@ impl StepCommand {
 
         if let Some(current_dir) = &self.current_dir {
             command.current_dir(current_dir);
+        }
+
+        for key in &self.removed_environment {
+            command.env_remove(key);
         }
 
         for (key, value) in &self.environment {
@@ -905,6 +920,19 @@ mod tests {
         assert!(outcome.stdout_text().starts_with("configured:"));
         assert_eq!(reported_dir, expected_dir);
         assert_eq!(runner.recorded_events().len(), 2);
+    }
+
+    #[test]
+    fn removes_inherited_environment_when_requested() {
+        let command = shell_command("printf '%s' \"${SHOULD_NOT_LEAK:-missing}\"")
+            .without_env("SHOULD_NOT_LEAK");
+        let process_command = command.to_process_command();
+        let removed_env = process_command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("SHOULD_NOT_LEAK"))
+            .expect("removed env should be present in child process config");
+
+        assert!(removed_env.1.is_none());
     }
 
     #[test]

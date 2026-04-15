@@ -182,6 +182,11 @@ impl TerraformBackend {
         let mut command = StepCommand::new(step_name, self.config.binary().program())
             .arg(subcommand)
             .with_current_dir(session.working_directory());
+        if self.config.execution_mode().is_isolated() {
+            for key in isolated_env_scrub_keys() {
+                command = command.without_env(*key);
+            }
+        }
         for (key, value) in session.environment() {
             command = command.with_env(key.clone(), value.clone());
         }
@@ -400,6 +405,15 @@ fn render_output_value(value: &Value) -> String {
     }
 }
 
+fn isolated_env_scrub_keys() -> &'static [&'static str] {
+    &[
+        "TF_CLI_ARGS",
+        "TF_CLI_ARGS_init",
+        "TF_DATA_DIR",
+        "TF_WORKSPACE",
+    ]
+}
+
 fn copy_deployment_tree(source: &Path, destination: &Path) -> io::Result<()> {
     fs::create_dir_all(destination)?;
 
@@ -607,6 +621,47 @@ mod tests {
         // In isolated mode, init runs without backend config file flags.
         // The backend override file forces local backend instead.
         assert_eq!(command.args(), &["init".to_string()]);
+    }
+
+    #[test]
+    fn isolated_commands_scrub_ambient_backend_shaping_environment() {
+        let backend = TerraformBackend::new(TerraformBackendConfig::default());
+        let session = backend_session("run-fixed-ambient-scrub");
+
+        let command = backend.init_command(&session);
+
+        assert!(
+            command.removed_environment().contains("TF_CLI_ARGS"),
+            "isolated init should scrub ambient TF_CLI_ARGS"
+        );
+        assert!(
+            command.removed_environment().contains("TF_CLI_ARGS_init"),
+            "isolated init should scrub ambient TF_CLI_ARGS_init"
+        );
+        assert!(
+            command.removed_environment().contains("TF_DATA_DIR"),
+            "isolated init should scrub ambient TF_DATA_DIR"
+        );
+        assert!(
+            command.removed_environment().contains("TF_WORKSPACE"),
+            "isolated init should scrub ambient TF_WORKSPACE"
+        );
+    }
+
+    #[test]
+    fn non_isolated_commands_preserve_ambient_backend_shaping_environment() {
+        let backend = TerraformBackend::new(
+            TerraformBackendConfig::default()
+                .with_execution_mode(TerraformExecutionMode::NonIsolated),
+        );
+        let session = backend_session("run-fixed-non-isolated-ambient");
+
+        let command = backend.init_command(&session);
+
+        assert!(
+            command.removed_environment().is_empty(),
+            "non-isolated commands should preserve ambient terraform environment"
+        );
     }
 
     #[test]

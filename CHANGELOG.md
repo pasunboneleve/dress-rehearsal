@@ -8,6 +8,12 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 - Release publishing now uses `softprops/action-gh-release@v3`, which is
   compatible with the GitHub Actions Node 24 runtime.
 
+### Fixed
+- Isolated Terraform/OpenTofu runs now scrub ambient backend-shaping
+  environment such as `TF_CLI_ARGS_init` before spawning child processes, so a
+  previous non-isolated run or direnv-loaded shell cannot leak remote backend
+  config into the isolated path.
+
 ## [0.3.0] - 2026-04-15
 
 ### Added

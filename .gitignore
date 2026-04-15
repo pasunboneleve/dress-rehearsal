@@ -2,6 +2,7 @@
 .codex
 /.dress.local.env
 /scripts/test-env-vars.local.sh
+**/.dress-runs/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

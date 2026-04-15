@@ -322,3 +322,102 @@ Why rejected:
 The first implementation slice should prove the seam by introducing
 run-scoped isolated mode in the Terraform/OpenTofu backend without modifying
 the core architecture beyond a narrow execution-mode selection.
+
+## Module Naming Contract
+
+Isolated mode protects Terraform/OpenTofu state, but it cannot prevent
+resource-name collisions in the cloud. If a module creates resources with
+hardcoded names, a rehearsal can still collide with live infrastructure.
+
+### The `TF_VAR_dress_run_id` variable
+
+In isolated mode, `dress` injects a per-run identifier into the child process
+environment:
+
+```
+TF_VAR_dress_run_id=run-<timestamp>-<sequence>
+```
+
+Modules should use this variable to create unique resource names during
+rehearsal.
+
+### Safe module pattern
+
+A module that supports isolated rehearsal declares the variable and uses it
+for resource naming:
+
+```hcl
+variable "dress_run_id" {
+  type        = string
+  default     = ""
+  description = "Rehearsal run identifier for resource name isolation"
+}
+
+variable "environment" {
+  type = string
+}
+
+locals {
+  name_suffix = var.dress_run_id != "" ? "-${var.dress_run_id}" : ""
+}
+
+resource "google_storage_bucket" "data" {
+  name = "my-app-${var.environment}${local.name_suffix}"
+  # ...
+}
+```
+
+When `dress` runs in isolated mode:
+- `TF_VAR_dress_run_id` is set to the run id
+- Resources get unique names like `my-app-dev-run-0192abc-0001`
+- No collision with live `my-app-dev` resources
+
+When running outside `dress` or in production:
+- `dress_run_id` defaults to empty string
+- Resources use their standard names like `my-app-dev`
+
+### Unsafe module pattern
+
+A module that hardcodes global names cannot rehearse safely:
+
+```hcl
+# UNSAFE: no way to isolate resource names
+resource "google_storage_bucket" "data" {
+  name = "my-app-production"  # collision-prone
+}
+```
+
+If you attempt to rehearse this module:
+- Isolated mode will prevent state collisions
+- But `terraform apply` will still try to create or modify `my-app-production`
+- This can destroy or corrupt live infrastructure
+
+### Refusal behavior
+
+`dress` cannot detect unsafe naming patterns automatically. It relies on module
+authors to adopt the naming contract.
+
+When isolated rehearsal cannot be safe:
+- The backend fails closed rather than silently targeting shared resources
+- Failures are preserved as run artifacts for diagnosis
+- Recovery hints guide operators toward manual cleanup
+
+### Guidelines for module authors
+
+1. Declare `variable "dress_run_id"` with an empty default
+2. Use it as a suffix or prefix for all globally unique resource names
+3. Test both paths: with and without the variable set
+4. Document which resources require the naming contract
+
+### What `dress` guarantees in isolated mode
+
+- State is local and transient (never touches remote state)
+- `TF_VAR_dress_run_id` is injected for resource name isolation
+- Workspace is copied, so source files are not modified
+- Failures preserve artifacts under the run directory
+
+### What `dress` does not guarantee
+
+- Automatic safe naming for modules that don't use `dress_run_id`
+- Protection against hardcoded global identifiers
+- Cleanup of orphaned cloud resources if naming isolation fails

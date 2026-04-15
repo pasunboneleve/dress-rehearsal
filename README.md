@@ -42,6 +42,7 @@ Current scope:
 First concrete target:
 - backend-tool rehearsal
 - current implementation: Terraform/OpenTofu
+- isolated rehearsal is now the default execution path
 - lifecycle observability for apply/destroy, not application correctness
 - no provider-service model in the intended architecture
 
@@ -99,6 +100,12 @@ Default behavior:
 `DRESS_DEPLOYMENT_ROOT` is not set. So if you run it from the root of your HCL
 code, you do not need to export that variable.
 
+By default, the Terraform/OpenTofu backend now rehearses from a run-scoped
+copied workspace with a run-scoped local state file under `.dress-runs/`. That
+isolates backend state from the source working tree, but it does not make
+hardcoded cloud resource names safe by itself. Modules still need explicit
+naming seams for collision-safe rehearsal coexistence.
+
 Explicit deployment root override:
 
 ```bash
@@ -112,6 +119,10 @@ export DRESS_RUNS_ROOT=/tmp/dress-runs
 export DRESS_WORKING_DIRECTORY=/path/to/deployment/root/env/dev
 export DRESS_TERRAFORM_BINARY=tofu
 ```
+
+The backend also injects `TF_VAR_dress_run_id` into Terraform/OpenTofu child
+processes during isolated rehearsal so modules can derive rehearsal-specific
+resource names without mutating the parent shell.
 
 ## Local Dev Workflow
 
@@ -151,3 +162,4 @@ Released under the [MIT License](LICENSE).
 
 See [docs/architecture.md](/home/dmvianna/src/projects/dress-rehearsal/docs/architecture.md) for the initial shape.
 See [docs/phases.md](/home/dmvianna/src/projects/dress-rehearsal/docs/phases.md) for the ordered implementation plan.
+See [docs/terraform-isolated-rehearsal.md](/home/dmvianna/src/projects/dress-rehearsal/docs/terraform-isolated-rehearsal.md) for the isolated rehearsal design.

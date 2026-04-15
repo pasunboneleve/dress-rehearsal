@@ -177,6 +177,12 @@ Execution path:
   runs on the same machine.
 - Backend state isolation must be explicit per run.
 - Preserved artifacts must remain attributable to a single run id.
+- Terraform/OpenTofu-specific isolation mechanics, including child-process
+  `TF_VAR_*` overlays and backend config shaping, belong inside the backend
+  implementation rather than the core orchestration types.
+
+See [terraform-isolated-rehearsal.md](/home/dmvianna/src/projects/dress-rehearsal/docs/terraform-isolated-rehearsal.md)
+for the current isolated rehearsal design.
 
 ### Observability
 

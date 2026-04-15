@@ -5,6 +5,8 @@ use crate::cleanup::CleanupAction;
 use crate::context::RunContext;
 use crate::steps::{StepCommand, StepRunner};
 use serde_json::Value;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,9 +26,23 @@ impl TerraformBinary {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TerraformExecutionMode {
+    #[default]
+    Isolated,
+    NonIsolated,
+}
+
+impl TerraformExecutionMode {
+    fn is_isolated(self) -> bool {
+        matches!(self, Self::Isolated)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerraformBackendConfig {
     binary: TerraformBinary,
+    execution_mode: TerraformExecutionMode,
     var_files: Vec<PathBuf>,
     backend_config_files: Vec<PathBuf>,
     auto_approve: bool,
@@ -36,6 +52,7 @@ impl Default for TerraformBackendConfig {
     fn default() -> Self {
         Self {
             binary: TerraformBinary::Terraform,
+            execution_mode: TerraformExecutionMode::Isolated,
             var_files: Vec::new(),
             backend_config_files: Vec::new(),
             auto_approve: true,
@@ -52,6 +69,10 @@ impl TerraformBackendConfig {
         &self.var_files
     }
 
+    pub fn execution_mode(&self) -> TerraformExecutionMode {
+        self.execution_mode
+    }
+
     pub fn backend_config_files(&self) -> &[PathBuf] {
         &self.backend_config_files
     }
@@ -62,6 +83,11 @@ impl TerraformBackendConfig {
 
     pub fn with_binary(mut self, binary: TerraformBinary) -> Self {
         self.binary = binary;
+        self
+    }
+
+    pub fn with_execution_mode(mut self, execution_mode: TerraformExecutionMode) -> Self {
+        self.execution_mode = execution_mode;
         self
     }
 
@@ -97,14 +123,21 @@ impl TerraformBackend {
 
     pub fn init_command(&self, session: &BackendSession) -> StepCommand {
         let mut command = self.base_command("terraform-init", session, "init");
-        for path in self.config.backend_config_files() {
-            command = command.arg(format!("-backend-config={}", path.display()));
+        if self.config.execution_mode().is_isolated() {
+            command = command.arg("-backend=false");
+        } else {
+            for path in self.config.backend_config_files() {
+                command = command.arg(format!("-backend-config={}", path.display()));
+            }
         }
         command
     }
 
     pub fn apply_command(&self, session: &BackendSession) -> StepCommand {
         let mut command = self.base_command("terraform-apply", session, "apply");
+        if self.config.execution_mode().is_isolated() {
+            command = command.arg(format!("-state={}", self.state_path(session).display()));
+        }
         if self.config.auto_approve() {
             command = command.arg("-auto-approve");
         }
@@ -115,12 +148,20 @@ impl TerraformBackend {
     }
 
     pub fn output_command(&self, session: &BackendSession) -> StepCommand {
-        self.base_command("terraform-output", session, "output")
-            .arg("-json")
+        let mut command = self
+            .base_command("terraform-output", session, "output")
+            .arg("-json");
+        if self.config.execution_mode().is_isolated() {
+            command = command.arg(format!("-state={}", self.state_path(session).display()));
+        }
+        command
     }
 
     pub fn destroy_command(&self, session: &BackendSession) -> StepCommand {
         let mut command = self.base_command("terraform-destroy", session, "destroy");
+        if self.config.execution_mode().is_isolated() {
+            command = command.arg(format!("-state={}", self.state_path(session).display()));
+        }
         if self.config.auto_approve() {
             command = command.arg("-auto-approve");
         }
@@ -145,6 +186,18 @@ impl TerraformBackend {
         command
     }
 
+    fn state_path(&self, session: &BackendSession) -> PathBuf {
+        session.backend_work_dir().join("terraform.tfstate")
+    }
+
+    fn isolated_workspace_root(&self, run_context: &RunContext) -> PathBuf {
+        run_context
+            .work_dir()
+            .join("backends")
+            .join(self.name())
+            .join("workspace")
+    }
+
     fn validate_request(&self, request: &BackendRequest) -> Result<(), BackendError> {
         if !request.deployment_root().exists() {
             return Err(BackendError::invalid_configuration(
@@ -157,6 +210,44 @@ impl TerraformBackend {
         }
 
         Ok(())
+    }
+
+    fn materialize_request(
+        &self,
+        run_context: &RunContext,
+        request: &BackendRequest,
+    ) -> Result<BackendRequest, BackendError> {
+        if !self.config.execution_mode().is_isolated() {
+            return Ok(clone_request(request));
+        }
+
+        let workspace_root = self.isolated_workspace_root(run_context);
+        copy_deployment_tree(request.deployment_root(), &workspace_root)
+            .map_err(|source| BackendError::io(self.name(), "initialize", source))?;
+
+        let mut isolated_request = BackendRequest::new(&workspace_root)
+            .with_env("TF_VAR_dress_run_id", run_context.run_id().to_string());
+        for (key, value) in request.environment() {
+            isolated_request = isolated_request.with_env(key.clone(), value.clone());
+        }
+
+        let isolated_working_directory = match request.working_directory() {
+            Some(working_directory) => {
+                let relative_path = working_directory.strip_prefix(request.deployment_root()).map_err(|_| {
+                    BackendError::invalid_configuration(
+                        self.name(),
+                        format!(
+                            "isolated rehearsal requires the working directory to stay within the deployment root: {}",
+                            working_directory.display()
+                        ),
+                    )
+                })?;
+                workspace_root.join(relative_path)
+            }
+            None => workspace_root.clone(),
+        };
+
+        Ok(isolated_request.with_working_directory(isolated_working_directory))
     }
 
     fn parse_outputs(&self, output_json: &str) -> Result<BackendOutputs, BackendError> {
@@ -204,7 +295,8 @@ impl DeploymentBackend for TerraformBackend {
     ) -> Result<BackendSession, BackendError> {
         self.validate_request(request)?;
 
-        let session = BackendSession::new(run_context, self.name(), request);
+        let materialized_request = self.materialize_request(run_context, request)?;
+        let session = BackendSession::new(run_context, self.name(), &materialized_request);
         session
             .materialize()
             .map_err(|source| BackendError::io(self.name(), "initialize", source))?;
@@ -254,9 +346,52 @@ fn render_output_value(value: &Value) -> String {
     }
 }
 
+fn clone_request(request: &BackendRequest) -> BackendRequest {
+    let mut cloned = BackendRequest::new(request.deployment_root());
+    if let Some(working_directory) = request.working_directory() {
+        cloned = cloned.with_working_directory(working_directory);
+    }
+    for (key, value) in request.environment() {
+        cloned = cloned.with_env(key.clone(), value.clone());
+    }
+    cloned
+}
+
+fn copy_deployment_tree(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::create_dir_all(destination)?;
+
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let entry_type = entry.file_type()?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+
+        if file_name == ".terraform" || file_name == ".dress-runs" {
+            continue;
+        }
+
+        if entry_type.is_dir() {
+            copy_deployment_tree(&source_path, &destination_path)?;
+        } else if entry_type.is_file() {
+            fs::copy(&source_path, &destination_path)?;
+        } else {
+            return Err(io::Error::other(format!(
+                "unsupported deployment entry in isolated rehearsal workspace: {}",
+                source_path.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{TerraformBackend, TerraformBackendConfig, TerraformBinary};
+    use super::{
+        TerraformBackend, TerraformBackendConfig, TerraformBinary, TerraformExecutionMode,
+    };
     use crate::backends::{BackendRequest, BackendSession, DeploymentBackend};
     use crate::context::{RunContext, RunId};
     use crate::steps::StepRunner;
@@ -304,6 +439,7 @@ mod tests {
         let backend = TerraformBackend::new(
             TerraformBackendConfig::default()
                 .with_binary(TerraformBinary::OpenTofu)
+                .with_execution_mode(TerraformExecutionMode::NonIsolated)
                 .with_var_file("env/dev.tfvars")
                 .with_auto_approve(true),
         );
@@ -325,7 +461,10 @@ mod tests {
 
     #[test]
     fn applies_backend_request_environment_to_terraform_commands() {
-        let backend = TerraformBackend::new(TerraformBackendConfig::default());
+        let backend = TerraformBackend::new(
+            TerraformBackendConfig::default()
+                .with_execution_mode(TerraformExecutionMode::NonIsolated),
+        );
         let run_context = RunContext::with_run_id("/tmp/dress-runs", RunId::new("run-fixed-2000"));
         let request = BackendRequest::new("/tmp/scenario")
             .with_working_directory("/tmp/scenario")
@@ -349,6 +488,7 @@ mod tests {
     fn builds_init_command_with_backend_config_files() {
         let backend = TerraformBackend::new(
             TerraformBackendConfig::default()
+                .with_execution_mode(TerraformExecutionMode::NonIsolated)
                 .with_backend_config_file("backend/dev.hcl")
                 .with_backend_config_file("backend/common.hcl"),
         );
@@ -367,18 +507,45 @@ mod tests {
     }
 
     #[test]
+    fn isolated_init_command_ignores_backend_config_files() {
+        let backend = TerraformBackend::new(
+            TerraformBackendConfig::default()
+                .with_backend_config_file("backend/dev.hcl")
+                .with_backend_config_file("backend/common.hcl"),
+        );
+        let session = backend_session("run-fixed-2007");
+
+        let command = backend.init_command(&session);
+
+        assert_eq!(
+            command.args(),
+            &["init".to_string(), "-backend=false".to_string()]
+        );
+    }
+
+    #[test]
     fn initializes_backend_session_and_materializes_workspace() -> io::Result<()> {
         let temp_dir = TestDir::new("initialize")?;
         let run_context =
             RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-terraform-init"));
         let scenario_root = temp_dir.path().join("scenario");
+        let nested_working_directory = scenario_root.join("env/dev");
         fs::create_dir_all(&scenario_root)?;
+        fs::create_dir_all(&nested_working_directory)?;
+        fs::write(scenario_root.join("main.tf"), "terraform {}\n")?;
+        fs::write(
+            nested_working_directory.join("terraform.tfvars"),
+            "name = \"dress\"\n",
+        )?;
+        fs::create_dir_all(scenario_root.join(".terraform"))?;
+        fs::write(scenario_root.join(".terraform").join("ignore-me"), "cache")?;
         run_context.materialize()?;
 
         let backend = TerraformBackend::new(TerraformBackendConfig::default().with_binary(
             TerraformBinary::Custom(platform_true_binary().to_path_buf()),
         ));
-        let request = BackendRequest::new(&scenario_root);
+        let request =
+            BackendRequest::new(&scenario_root).with_working_directory(&nested_working_directory);
         let session = backend
             .initialize(&run_context, &request, &StepRunner::new())
             .map_err(io::Error::other)?;
@@ -386,7 +553,50 @@ mod tests {
         assert_eq!(session.backend_name(), "terraform");
         assert!(session.backend_work_dir().is_dir());
         assert!(session.backend_artifacts_dir().is_dir());
+        assert_eq!(
+            session.working_directory(),
+            session.deployment_root().join("env/dev")
+        );
+        assert_eq!(
+            fs::read_to_string(session.deployment_root().join("main.tf"))?,
+            "terraform {}\n"
+        );
+        assert_eq!(
+            fs::read_to_string(session.working_directory().join("terraform.tfvars"))?,
+            "name = \"dress\"\n"
+        );
+        assert!(!session.deployment_root().join(".terraform").exists());
+        assert_eq!(
+            session.environment().get("TF_VAR_dress_run_id"),
+            Some(&"run-fixed-terraform-init".to_string())
+        );
         Ok(())
+    }
+
+    #[test]
+    fn isolated_commands_use_local_state_and_disable_remote_backend() {
+        let backend = TerraformBackend::new(TerraformBackendConfig::default());
+        let session = backend_session("run-fixed-2005");
+
+        let init_command = backend.init_command(&session);
+        let apply_command = backend.apply_command(&session);
+        let output_command = backend.output_command(&session);
+        let destroy_command = backend.destroy_command(&session);
+        let state_arg = format!(
+            "-state={}",
+            session
+                .backend_work_dir()
+                .join("terraform.tfstate")
+                .display()
+        );
+
+        assert_eq!(
+            init_command.args(),
+            &["init".to_string(), "-backend=false".to_string()]
+        );
+        assert!(apply_command.args().contains(&state_arg));
+        assert!(output_command.args().contains(&state_arg));
+        assert!(destroy_command.args().contains(&state_arg));
     }
 
     #[test]
@@ -427,6 +637,7 @@ mod tests {
         let backend = TerraformBackend::new(
             TerraformBackendConfig::default()
                 .with_binary(TerraformBinary::OpenTofu)
+                .with_execution_mode(TerraformExecutionMode::NonIsolated)
                 .with_var_file("env/dev.tfvars"),
         );
         let session = backend_session("run-fixed-2004");
@@ -442,6 +653,37 @@ mod tests {
                 "-var-file=env/dev.tfvars".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn isolated_rehearsal_rejects_working_directory_outside_deployment_root() -> io::Result<()> {
+        let temp_dir = TestDir::new("outside-working-dir")?;
+        let run_context = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-2006"));
+        let deployment_root = temp_dir.path().join("deployment");
+        let outside_working_directory = temp_dir.path().join("outside");
+        fs::create_dir_all(&deployment_root)?;
+        fs::create_dir_all(&outside_working_directory)?;
+        run_context.materialize()?;
+
+        let backend = TerraformBackend::new(TerraformBackendConfig::default().with_binary(
+            TerraformBinary::Custom(platform_true_binary().to_path_buf()),
+        ));
+        let request = BackendRequest::new(&deployment_root)
+            .with_working_directory(&outside_working_directory);
+
+        let error = backend
+            .initialize(&run_context, &request, &StepRunner::new())
+            .expect_err(
+                "isolated rehearsal should reject working directories outside the deployment root",
+            );
+
+        assert!(
+            error
+                .to_string()
+                .contains("working directory to stay within the deployment root"),
+            "unexpected error: {error}"
+        );
+        Ok(())
     }
 
     fn backend_session(run_id: &str) -> BackendSession {

@@ -4,20 +4,6 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 
 ## [Unreleased]
 
-### Changed
-- Isolated workspace materialization now widens the copied source root when
-  Terraform/OpenTofu configuration uses parent-relative paths such as
-  `${path.module}/../scripts/...`, so sibling helper assets remain available
-  inside the run-scoped workspace.
-
-### Fixed
-- Excluded `backend.auto.hcl` and `*.auto.tfbackend` partial backend config
-  files from isolated workspaces so the generated local backend override does
-  not conflict with copied remote-backend settings.
-- Final CLI failure summaries now use warning styling for existing-resource
-  conflict failures when the underlying Terraform/OpenTofu error indicates a
-  collision such as `already exists`.
-
 ## [0.3.0] - 2026-04-15
 
 ### Added
@@ -41,6 +27,10 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 - Workspace copying in isolated mode now excludes `.terraform`, `.git`,
   `.dress-runs`, `backend.auto.hcl`, and `*.auto.tfbackend` files to avoid
   polluting the run-scoped workspace and prevent backend config conflicts.
+- Isolated workspace materialization now widens the copied source root when
+  Terraform/OpenTofu configuration uses parent-relative paths such as
+  `${path.module}/../scripts/...`, so sibling helper assets remain available
+  inside the run-scoped workspace.
 - Transient state files are now stored exclusively under the run-scoped
   `.dress-runs/<run-id>/` directory, never in the user's deployment directory.
 
@@ -53,6 +43,9 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
   file that forces local backend. Previously, `terraform init -backend=false`
   was insufficient because apply/destroy would still detect the unconfigured
   remote backend.
+- Final CLI failure summaries now use warning styling for existing-resource
+  conflict failures when the underlying Terraform/OpenTofu error indicates a
+  collision such as `already exists`.
 
 ## [0.2.0] - 2026-04-15
 

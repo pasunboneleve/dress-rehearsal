@@ -187,35 +187,10 @@ fn join_relative_path(base: &Path, relative_path: impl AsRef<Path>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{RunContext, RunId};
-    use std::env;
+    use crate::test_support::TestDir;
     use std::fs;
     use std::io;
     use std::path::PathBuf;
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(name: &str) -> io::Result<Self> {
-            let path = env::temp_dir().join(format!(
-                "dress-rehearsal-tests-{name}-{}",
-                RunId::generate().as_str()
-            ));
-            fs::create_dir_all(&path)?;
-            Ok(Self { path })
-        }
-
-        fn path(&self) -> &PathBuf {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
 
     #[test]
     fn derives_paths_from_run_id() {
@@ -246,7 +221,7 @@ mod tests {
 
     #[test]
     fn materialize_creates_layout_and_metadata() -> io::Result<()> {
-        let temp_dir = TestDir::new("materialize")?;
+        let temp_dir = TestDir::new("tests", "materialize")?;
         let context = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-0002"));
 
         context.materialize()?;
@@ -264,7 +239,7 @@ mod tests {
 
     #[test]
     fn preserves_failure_artifacts_under_preserved_dir() -> io::Result<()> {
-        let temp_dir = TestDir::new("preserve-file")?;
+        let temp_dir = TestDir::new("tests", "preserve-file")?;
         let context = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-0003"));
         let source = temp_dir.path().join("stderr.log");
 
@@ -289,6 +264,53 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.as_str().starts_with("run-"));
         assert!(second.as_str().starts_with("run-"));
+    }
+
+    #[test]
+    fn run_contexts_materialize_into_disjoint_run_local_directories() -> io::Result<()> {
+        let temp_dir = TestDir::new("tests", "run-isolation")?;
+        let first = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-0008"));
+        let second = RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-0009"));
+
+        first.materialize()?;
+        second.materialize()?;
+
+        fs::create_dir_all(first.artifact_path("steps"))?;
+        fs::create_dir_all(second.artifact_path("steps"))?;
+        fs::write(first.artifact_path("steps/output.log"), "first run output")?;
+        fs::write(
+            second.artifact_path("steps/output.log"),
+            "second run output",
+        )?;
+        let first_source = temp_dir.path().join("first-stderr.log");
+        let second_source = temp_dir.path().join("second-stderr.log");
+        fs::write(&first_source, "first preserved")?;
+        fs::write(&second_source, "second preserved")?;
+        first.preserve_file(&first_source, "logs/stderr.log")?;
+        second.preserve_file(&second_source, "logs/stderr.log")?;
+
+        assert_ne!(first.root_dir(), second.root_dir());
+        assert_ne!(first.work_dir(), second.work_dir());
+        assert_ne!(first.artifacts_dir(), second.artifacts_dir());
+        assert_ne!(first.preserved_dir(), second.preserved_dir());
+        assert_eq!(
+            fs::read_to_string(first.artifact_path("steps/output.log"))?,
+            "first run output"
+        );
+        assert_eq!(
+            fs::read_to_string(second.artifact_path("steps/output.log"))?,
+            "second run output"
+        );
+        assert_eq!(
+            fs::read_to_string(first.preserved_artifact_path("logs/stderr.log"))?,
+            "first preserved"
+        );
+        assert_eq!(
+            fs::read_to_string(second.preserved_artifact_path("logs/stderr.log"))?,
+            "second preserved"
+        );
+
+        Ok(())
     }
 
     #[test]

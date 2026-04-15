@@ -40,14 +40,22 @@ Current scope:
 - keep the initial code skeleton narrow and structural
 
 First concrete target:
-- Terraform/OpenTofu backend
-- AWS ECS Express infrastructure rehearsal
+- backend-tool rehearsal
+- current implementation: Terraform/OpenTofu
 - lifecycle observability for apply/destroy, not application correctness
+- no provider-service model in the intended architecture
 
 Not implemented yet:
 - broad backend coverage
-- multiple scenario families
 - application-level verification
+
+Strict boundary:
+- `dress-rehearsal` should operate the selected infrastructure backend tool and generic rehearsal
+  mechanics only
+- cloud providers must be driven by the backend tool itself, not by
+  provider-service-aware logic in `dress-rehearsal`
+- any current AWS-specific naming in the codebase is legacy implementation debt,
+  not intended product scope
 
 ## Install
 
@@ -61,6 +69,81 @@ Tagged releases publish prebuilt archives for:
 
 - `x86_64-unknown-linux-gnu`
 - `aarch64-apple-darwin`
+
+Supported platforms are currently:
+
+- Linux x86_64
+- macOS Apple Silicon
+
+Windows is not currently supported or tested.
+
+## Usage
+
+Run the current backend rehearsal flow:
+
+```bash
+dress
+```
+
+Show help or version:
+
+```bash
+dress --help
+dress --version
+dress version
+```
+
+Default behavior:
+
+`dress` uses the current working directory as the deployment root when
+`DRESS_DEPLOYMENT_ROOT` is not set. So if you run it from the root of your HCL
+code, you do not need to export that variable.
+
+Explicit deployment root override:
+
+```bash
+export DRESS_DEPLOYMENT_ROOT=/path/to/deployment/root
+```
+
+Useful optional environment:
+
+```bash
+export DRESS_RUNS_ROOT=/tmp/dress-runs
+export DRESS_WORKING_DIRECTORY=/path/to/deployment/root/env/dev
+export DRESS_TERRAFORM_BINARY=tofu
+```
+
+## Local Dev Workflow
+
+For local sibling-template testing, keep machine-specific paths out of git and
+use an explicit sourced env file such as `.dress.local.env`, which is ignored by
+the repo.
+
+Example local-only file contents:
+
+```bash
+export DRESS_DEPLOYMENT_ROOT=../minimal-aws-github-ci-template/infra
+export DRESS_WORKING_DIRECTORY=../minimal-aws-github-ci-template/infra
+export DRESS_TERRAFORM_BINARY=tofu
+```
+
+or:
+
+```bash
+export DRESS_DEPLOYMENT_ROOT=../minimal-gcp-github-ci-template/infra
+export DRESS_WORKING_DIRECTORY=../minimal-gcp-github-ci-template/infra
+export DRESS_TERRAFORM_BINARY=tofu
+```
+
+Use it explicitly:
+
+```bash
+source .dress.local.env
+dress
+```
+
+`dress` does not load that file automatically. The state remains explicit in
+the shell session that sourced it.
 
 ## License
 

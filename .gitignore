@@ -1,3 +1,9 @@
 /target
 .codex
-/scripts/test-env-vars.sh
+/.dress.local.env
+/scripts/test-env-vars.local.sh
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

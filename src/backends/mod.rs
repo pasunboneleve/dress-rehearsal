@@ -283,6 +283,9 @@ impl std::error::Error for BackendError {
 mod tests {
     use super::{BackendOutputs, BackendRequest, BackendSession};
     use crate::context::{RunContext, RunId};
+    use crate::test_support::TestDir;
+    use std::fs;
+    use std::io;
     use std::path::PathBuf;
 
     #[test]
@@ -335,7 +338,7 @@ mod tests {
     fn request_keeps_generic_environment_inputs() {
         let request = BackendRequest::new("/tmp/scenario")
             .with_working_directory("/tmp/scenario/work")
-            .with_env("AWS_REGION", "ap-southeast-2")
+            .with_env("BACKEND_WORKSPACE", "preview")
             .with_env("STACK_NAME", "dress-preview");
 
         assert_eq!(request.deployment_root(), PathBuf::from("/tmp/scenario"));
@@ -344,12 +347,71 @@ mod tests {
             Some(PathBuf::from("/tmp/scenario/work").as_path())
         );
         assert_eq!(
-            request.environment().get("AWS_REGION"),
-            Some(&"ap-southeast-2".to_string())
+            request.environment().get("BACKEND_WORKSPACE"),
+            Some(&"preview".to_string())
         );
         assert_eq!(
             request.environment().get("STACK_NAME"),
             Some(&"dress-preview".to_string())
         );
+    }
+
+    #[test]
+    fn backend_sessions_are_isolated_per_run_context() -> io::Result<()> {
+        let runs_root = TestDir::new("backend-tests", "backend-isolation")?;
+        let first_context = RunContext::with_run_id(runs_root.path(), RunId::new("run-fixed-1003"));
+        let second_context =
+            RunContext::with_run_id(runs_root.path(), RunId::new("run-fixed-1004"));
+        let request =
+            BackendRequest::new("/tmp/scenario").with_working_directory("/tmp/scenario/env");
+        let first_session = BackendSession::new(&first_context, "terraform", &request);
+        let second_session = BackendSession::new(&second_context, "terraform", &request);
+
+        first_session.materialize()?;
+        second_session.materialize()?;
+
+        fs::write(
+            first_session.backend_work_dir().join("apply.log"),
+            "first backend",
+        )?;
+        fs::write(
+            second_session.backend_work_dir().join("apply.log"),
+            "second backend",
+        )?;
+        fs::write(
+            first_session.backend_artifacts_dir().join("outputs.json"),
+            "{\"run\":\"first\"}",
+        )?;
+        fs::write(
+            second_session.backend_artifacts_dir().join("outputs.json"),
+            "{\"run\":\"second\"}",
+        )?;
+
+        assert_ne!(
+            first_session.backend_work_dir(),
+            second_session.backend_work_dir()
+        );
+        assert_ne!(
+            first_session.backend_artifacts_dir(),
+            second_session.backend_artifacts_dir()
+        );
+        assert_eq!(
+            fs::read_to_string(first_session.backend_work_dir().join("apply.log"))?,
+            "first backend"
+        );
+        assert_eq!(
+            fs::read_to_string(second_session.backend_work_dir().join("apply.log"))?,
+            "second backend"
+        );
+        assert_eq!(
+            fs::read_to_string(first_session.backend_artifacts_dir().join("outputs.json"))?,
+            "{\"run\":\"first\"}"
+        );
+        assert_eq!(
+            fs::read_to_string(second_session.backend_artifacts_dir().join("outputs.json"))?,
+            "{\"run\":\"second\"}"
+        );
+
+        Ok(())
     }
 }

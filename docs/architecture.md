@@ -44,7 +44,8 @@ Future room: CloudFormation.
 
 ### `Scenario`
 
-Owns the minimal rehearsal contract for a target:
+If retained at all, owns only a minimal provider-agnostic contract around a
+backend-tool rehearsal:
 - prerequisite checks
 - backend input shaping when needed
 - discovery of backend-managed outputs when needed
@@ -52,12 +53,8 @@ Owns the minimal rehearsal contract for a target:
 A scenario does not own:
 - direct cloud-service lifecycle control
 - service-specific teardown commands
+- provider-service concepts or service families
 - application-level correctness checks
-
-Examples:
-- AWS ECS Express infrastructure rehearsal
-- AWS Lambda Function URL
-- GCP Cloud Run HTTP service
 
 ### `VerificationSpec`
 
@@ -111,15 +108,15 @@ enough to support iterative development rather than broad platform coverage.
 - no YAML DSL
 - no automatic inference of arbitrary infrastructure layouts
 - no coupling to `devloop` in the core architecture
+- no provider-service model inside `dress-rehearsal`
 
 ## Early Shape
 
-The first implementation path should move one real happy path through these
-boundaries:
+The first implementation path should move one real backend-tool happy path
+through these boundaries:
 
 Initial concrete target:
 - backend: Terraform/OpenTofu
-- scenario: AWS ECS Express infrastructure rehearsal
 - verification: lifecycle observability only
 
 Execution path:
@@ -142,6 +139,27 @@ Execution path:
 - The first version treats backend apply/destroy as the rehearsal boundary.
 - Failures must be diagnosable from preserved step logs, summaries, and backend artifacts.
 - The harness must not issue direct cloud-service lifecycle commands outside the backend contract.
+- The harness must not model provider services or require provider-service
+  concepts in order to run the chosen backend tool.
+
+## Boundary Notes
+
+- The selected backend tool is the sole cloud-facing control surface.
+  Cloud-provider APIs should be reached only through that backend tool, not
+  through provider-aware orchestration in `dress-rehearsal`.
+- Scenario bootstrap remains inside `ScenarioPreparation`: it may add
+  prerequisite steps and scenario-owned cleanup actions before backend
+  initialization, but it must not implicitly register backend cleanup or
+  reshape teardown order across that boundary.
+- Any temporary scenario-like abstraction must remain generic to backend
+  invocation. Provider-service targets such as ECS services or Lambda functions
+  are outside the intended architecture.
+- Verification wiring begins only after `Scenario::discover` receives backend
+  outputs. Changing verification labels, metadata, requests, or assertions must
+  not change deployment inputs or cleanup ordering.
+- Any cleanup needed after verification failure must already be registered
+  through scenario preparation, scenario discovery, or the backend destroy
+  action. Verification itself is not a lifecycle control surface.
 
 ## Operational Invariants
 
@@ -167,3 +185,58 @@ Execution path:
   path.
 - CI usability matters: step names, live process output, and failure summaries
   should remain clear in non-interactive environments.
+
+## Current Narrow Assumptions
+
+### POSIX process model only
+
+- Current limitation: step execution and test fixtures assume POSIX tools such
+  as `/bin/sh`, `printf`, and standard filesystem semantics. Windows is not a
+  supported runtime target today.
+- Justification: Linux and macOS are the only supported release targets, and a
+  POSIX-first execution model keeps early failure artifacts and shell commands
+  easy to inspect.
+- Future extraction point: introduce a platform-aware command construction
+  boundary only when a real non-POSIX target is required.
+
+### One backend family
+
+- Current limitation: `DeploymentBackend` currently has one concrete family,
+  Terraform/OpenTofu.
+- Justification: the first backend exists to prove the apply/destroy lifecycle
+  boundary before broadening the configuration surface to additional tools.
+- Future extraction point: add a second real backend before generalizing shared
+  backend helpers or CLI/backend selection rules.
+
+### One scenario family
+
+- Current limitation: there is still only one generic runtime shape around the
+  backend tool, so the abstraction has not yet been proven across materially
+  different backend-input or output-discovery needs.
+- Justification: one narrow, provider-agnostic path is enough to stabilize the
+  orchestration boundary before deciding whether the abstraction should broaden
+  or collapse further.
+- Future extraction point: only broaden the abstraction if a second real backend
+  tool or generic rehearsal mode needs different preparation or discovery
+  behavior.
+
+### Verification stays observational
+
+- Current limitation: verification wiring may translate discovered outputs into
+  named-value or HTTP checks, but it is not allowed to own service lifecycle
+  commands or cleanup registration.
+- Justification: keeping verification observational preserves the boundary where
+  deployment and teardown stay owned by the backend and cleanup manager.
+- Future extraction point: expand `VerificationSpec` only when a second real
+  verification mode requires new inputs without crossing into lifecycle
+  control.
+
+### Run artifacts stay local and filesystem-backed
+
+- Current limitation: rehearsal evidence is written under `RunContext` on the
+  local filesystem rather than through a pluggable artifact sink.
+- Justification: local paths are the simplest way to keep summaries, step logs,
+  and preserved artifacts attributable to a single run during early
+  architecture work.
+- Future extraction point: add an artifact publishing boundary only when a real
+  remote sink or CI retention workflow needs the same evidence model.

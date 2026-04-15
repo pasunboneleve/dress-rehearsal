@@ -223,24 +223,35 @@ impl TerraformBackend {
             return Ok(request.clone());
         }
 
-        let workspace_root = self.isolated_workspace_root(run_context);
-        copy_deployment_tree(request.deployment_root(), &workspace_root)
+        let source_root = self
+            .isolated_source_root(request)
             .map_err(|source| BackendError::io(self.name(), "initialize", source))?;
+        let deployment_root_relative = request
+            .deployment_root()
+            .strip_prefix(&source_root)
+            .expect("deployment root should remain under the isolated source root");
+        let workspace_root = self.isolated_workspace_root(run_context);
+        copy_deployment_tree(&source_root, &workspace_root)
+            .map_err(|source| BackendError::io(self.name(), "initialize", source))?;
+        let isolated_deployment_root = workspace_root.join(deployment_root_relative);
 
         let isolated_working_directory = match request.working_directory() {
             Some(working_directory) => {
-                let relative_path = working_directory.strip_prefix(request.deployment_root()).map_err(|_| {
-                    BackendError::invalid_configuration(
-                        self.name(),
-                        format!(
-                            "isolated rehearsal requires the working directory to stay within the deployment root: {}",
-                            working_directory.display()
-                        ),
-                    )
-                })?;
+                let relative_path =
+                    working_directory
+                        .strip_prefix(&source_root)
+                        .map_err(|_| {
+                            BackendError::invalid_configuration(
+                                self.name(),
+                                format!(
+                                    "isolated rehearsal requires the working directory to stay within the isolated source root: {}",
+                                    working_directory.display()
+                                ),
+                            )
+                        })?;
                 workspace_root.join(relative_path)
             }
-            None => workspace_root.clone(),
+            None => isolated_deployment_root.clone(),
         };
 
         // Generate a backend override file to force local state storage.
@@ -248,8 +259,8 @@ impl TerraformBackend {
         self.write_backend_override(&isolated_working_directory)
             .map_err(|source| BackendError::io(self.name(), "initialize", source))?;
 
-        let mut isolated_request =
-            BackendRequest::new(&workspace_root).with_working_directory(isolated_working_directory);
+        let mut isolated_request = BackendRequest::new(&isolated_deployment_root)
+            .with_working_directory(isolated_working_directory);
         for (key, value) in request.environment() {
             isolated_request = isolated_request.with_env(key.clone(), value.clone());
         }
@@ -257,6 +268,23 @@ impl TerraformBackend {
             isolated_request.with_env("TF_VAR_dress_run_id", run_context.run_id().to_string());
 
         Ok(isolated_request)
+    }
+
+    fn isolated_source_root(&self, request: &BackendRequest) -> io::Result<PathBuf> {
+        if deployment_uses_parent_relative_paths(request.deployment_root())? {
+            request
+                .deployment_root()
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| {
+                    io::Error::other(format!(
+                        "isolated rehearsal cannot widen source root above filesystem root: {}",
+                        request.deployment_root().display()
+                    ))
+                })
+        } else {
+            Ok(request.deployment_root().to_path_buf())
+        }
     }
 
     fn write_backend_override(&self, working_directory: &Path) -> io::Result<()> {
@@ -409,6 +437,25 @@ fn copy_deployment_tree(source: &Path, destination: &Path) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn deployment_uses_parent_relative_paths(deployment_root: &Path) -> io::Result<bool> {
+    for entry in fs::read_dir(deployment_root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("tf") {
+            continue;
+        }
+        let contents = fs::read_to_string(&path)?;
+        if contents.contains("${path.module}/../") || contents.contains("path.module}/../") {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 #[cfg(unix)]
@@ -623,13 +670,65 @@ mod tests {
             Some(&"run-fixed-terraform-init".to_string())
         );
         // Backend override file should be generated in the working directory
-        let override_path = session.working_directory().join("dress_backend_override.tf");
+        let override_path = session
+            .working_directory()
+            .join("dress_backend_override.tf");
         assert!(override_path.exists(), "backend override file should exist");
         let override_content = fs::read_to_string(&override_path)?;
         assert!(
             override_content.contains(r#"backend "local""#),
             "backend override should force local backend"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn isolated_workspace_preserves_parent_relative_script_layout() -> io::Result<()> {
+        let temp_dir = TestDir::new("parent-relative-layout")?;
+        let repo_root = temp_dir.path().join("repo");
+        let deployment_root = repo_root.join("infra");
+        let scripts_dir = repo_root.join("scripts");
+        let run_context =
+            RunContext::with_run_id(temp_dir.path(), RunId::new("run-fixed-parent-relative"));
+        fs::create_dir_all(&deployment_root)?;
+        fs::create_dir_all(&scripts_dir)?;
+        fs::write(
+            deployment_root.join("main.tf"),
+            r#"
+data "external" "example" {
+  program = ["bash", "${path.module}/../scripts/example.sh"]
+}
+"#,
+        )?;
+        fs::write(
+            scripts_dir.join("example.sh"),
+            "#!/usr/bin/env bash\nexit 0\n",
+        )?;
+        run_context.materialize()?;
+
+        let backend = TerraformBackend::new(TerraformBackendConfig::default().with_binary(
+            TerraformBinary::Custom(platform_true_binary().to_path_buf()),
+        ));
+        let session = backend
+            .initialize(
+                &run_context,
+                &BackendRequest::new(&deployment_root),
+                &StepRunner::new(),
+            )
+            .map_err(io::Error::other)?;
+
+        assert_eq!(session.deployment_root(), session.working_directory());
+        assert_eq!(
+            fs::read_to_string(
+                session
+                    .working_directory()
+                    .parent()
+                    .expect("infra workspace should have copied parent")
+                    .join("scripts/example.sh")
+            )?,
+            "#!/usr/bin/env bash\nexit 0\n"
+        );
+
         Ok(())
     }
 
@@ -800,7 +899,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("working directory to stay within the deployment root"),
+                .contains("working directory to stay within the isolated source root"),
             "unexpected error: {error}"
         );
         Ok(())
@@ -818,7 +917,9 @@ mod tests {
 
         let backend = TerraformBackend::new(
             TerraformBackendConfig::default()
-                .with_binary(TerraformBinary::Custom(platform_true_binary().to_path_buf()))
+                .with_binary(TerraformBinary::Custom(
+                    platform_true_binary().to_path_buf(),
+                ))
                 .with_execution_mode(TerraformExecutionMode::NonIsolated),
         );
         let request = BackendRequest::new(&scenario_root);
@@ -848,7 +949,9 @@ mod tests {
 
         let backend = TerraformBackend::new(
             TerraformBackendConfig::default()
-                .with_binary(TerraformBinary::Custom(platform_true_binary().to_path_buf()))
+                .with_binary(TerraformBinary::Custom(
+                    platform_true_binary().to_path_buf(),
+                ))
                 .with_execution_mode(TerraformExecutionMode::NonIsolated),
         );
         let request = BackendRequest::new(&scenario_root);

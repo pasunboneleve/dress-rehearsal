@@ -584,11 +584,8 @@ mod tests {
 
     #[test]
     fn disable_isolation_flag_is_parsed() {
-        let selection = select_command(&[
-            "dress".to_string(),
-            "--disable-isolation".to_string(),
-        ])
-        .expect("disable-isolation flag should parse");
+        let selection = select_command(&["dress".to_string(), "--disable-isolation".to_string()])
+            .expect("disable-isolation flag should parse");
 
         assert!(matches!(
             selection,

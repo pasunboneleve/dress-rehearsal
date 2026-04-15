@@ -216,7 +216,7 @@ fn confirm_disable_isolation(skip_confirmation: bool) -> Result<(), String> {
         return Ok(());
     }
 
-    if !io::stderr().is_terminal() {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
         return Err(
             "--disable-isolation requires interactive confirmation or --yes in non-interactive mode"
                 .to_string(),

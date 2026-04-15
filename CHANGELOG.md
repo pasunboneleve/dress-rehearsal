@@ -4,6 +4,35 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-15
+
+### Added
+- Isolated Terraform/OpenTofu rehearsal is now the default execution mode.
+  Rehearsals run in a copied workspace with local-only state, preventing
+  accidental modification of shared remote state or live infrastructure.
+- Added `--disable-isolation` flag as a destructive escape hatch for operators
+  who need to run against shared state. Requires interactive confirmation
+  (typing `disable-isolation`) or `--yes` for non-interactive automation.
+- Added `TF_VAR_dress_run_id` injection in isolated mode, providing modules
+  with a per-run identifier for resource name isolation.
+- Documented the module naming contract for safe rehearsal coexistence in
+  `docs/terraform-isolated-rehearsal.md`, including safe/unsafe patterns and
+  guidance for module authors.
+
+### Changed
+- Backend configuration shaping is now fully owned by the Terraform/OpenTofu
+  backend. In isolated mode, `-backend=false` is used automatically; in
+  non-isolated mode, user-provided config files are passed via `-backend-config`.
+- Workspace copying in isolated mode now excludes `.terraform`, `.git`, and
+  `.dress-runs` directories to avoid polluting the run-scoped workspace.
+- Transient state files are now stored exclusively under the run-scoped
+  `.dress-runs/<run-id>/` directory, never in the user's deployment directory.
+
+### Fixed
+- Fixed terminal detection for `--disable-isolation` confirmation to check both
+  stdin and stderr, preventing blocking when stdin is redirected but stderr is
+  a terminal.
+
 ## [0.2.0] - 2026-04-15
 
 ### Added

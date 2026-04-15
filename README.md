@@ -94,6 +94,13 @@ dress --version
 dress version
 ```
 
+Disable isolation (destructive, use with caution):
+
+```bash
+dress --disable-isolation        # requires interactive confirmation
+dress --disable-isolation --yes  # skips confirmation (for automation)
+```
+
 Default behavior:
 
 `dress` uses the current working directory as the deployment root when
@@ -123,6 +130,31 @@ export DRESS_TERRAFORM_BINARY=tofu
 The backend also injects `TF_VAR_dress_run_id` into Terraform/OpenTofu child
 processes during isolated rehearsal so modules can derive rehearsal-specific
 resource names without mutating the parent shell.
+
+## Module Naming Contract
+
+For safe rehearsal coexistence, modules should use `TF_VAR_dress_run_id` to
+create unique resource names:
+
+```hcl
+variable "dress_run_id" {
+  type        = string
+  default     = ""
+  description = "Rehearsal run identifier for resource name isolation"
+}
+
+locals {
+  name_suffix = var.dress_run_id != "" ? "-${var.dress_run_id}" : ""
+}
+
+resource "google_storage_bucket" "data" {
+  name = "my-app-${var.environment}${local.name_suffix}"
+}
+```
+
+This ensures rehearsals create isolated resources while production deployments
+use standard names. See [docs/terraform-isolated-rehearsal.md](docs/terraform-isolated-rehearsal.md)
+for the full naming contract documentation.
 
 ## Local Dev Workflow
 

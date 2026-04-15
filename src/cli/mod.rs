@@ -127,7 +127,7 @@ fn run_backend_rehearsal(options: RehearsalOptions) -> Result<i32, String> {
                 failure.run_context().root_dir().display()
             ));
             dress_log(format!("failure during {}", failure.stage()));
-            dress_log(format!("error {}", failure.error()));
+            dress_log_failure_error(failure.error().to_string());
             if let Some(summary_path) = failure.summary_path() {
                 dress_log(format!("summary {}", summary_path.display()));
             }
@@ -304,6 +304,15 @@ fn dress_log(message: impl AsRef<str>) {
     }
 }
 
+fn dress_log_failure_error(message: impl AsRef<str>) {
+    let message = message.as_ref();
+    if failure_error_looks_like_existing_resource_conflict(message) {
+        dress_log_warning(format!("error {message}"));
+    } else {
+        dress_log(format!("error {message}"));
+    }
+}
+
 fn print_lines(message: &str) {
     for line in message.lines() {
         println!("{line}");
@@ -330,6 +339,12 @@ fn dress_prefix_warning() -> String {
     } else {
         "[dress]".to_string()
     }
+}
+
+fn failure_error_looks_like_existing_resource_conflict(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("already exists")
+        || normalized.contains("entityalreadyexists")
 }
 
 fn usage_text() -> &'static str {
@@ -445,7 +460,8 @@ fn help_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandSelection, RehearsalOptions, SmokeEnvironment, help_text, load_smoke_config,
+        CommandSelection, RehearsalOptions, SmokeEnvironment,
+        failure_error_looks_like_existing_resource_conflict, help_text, load_smoke_config,
         run_inner, select_command, terraform_binary_from_env, version_text,
     };
     use crate::backends::terraform::{TerraformBinary, TerraformExecutionMode};
@@ -652,5 +668,18 @@ mod tests {
             .expect("config should load");
 
         assert!(!config.backend_config.execution_mode().is_isolated());
+    }
+
+    #[test]
+    fn existing_resource_conflicts_are_classified_for_warning_output() {
+        assert!(failure_error_looks_like_existing_resource_conflict(
+            "backend `terraform` step failed during deploy: Requested entity already exists"
+        ));
+        assert!(failure_error_looks_like_existing_resource_conflict(
+            "backend `terraform` step failed during deploy: Error 409: resource already exists"
+        ));
+        assert!(!failure_error_looks_like_existing_resource_conflict(
+            "backend `terraform` step failed during deploy: exit status: 1"
+        ));
     }
 }

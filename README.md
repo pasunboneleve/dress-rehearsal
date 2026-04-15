@@ -113,6 +113,12 @@ isolates backend state from the source working tree, but it does not make
 hardcoded cloud resource names safe by itself. Modules still need explicit
 naming seams for collision-safe rehearsal coexistence.
 
+The isolated workspace keeps parent-relative module paths working when your
+configuration refers to sibling files such as `${path.module}/../scripts/...`.
+It also excludes copied `backend.auto.hcl` and `*.auto.tfbackend` partial
+backend config files so the run-scoped local backend override does not conflict
+with remote-backend settings from the source tree.
+
 Explicit deployment root override:
 
 ```bash

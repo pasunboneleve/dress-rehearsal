@@ -92,11 +92,14 @@ In isolated mode, the Terraform/OpenTofu backend will:
    directory
 2. copy or materialize the deployment files needed for the backend tool into
    that run-scoped workspace
-3. run `terraform`/`tofu` from the run-scoped workspace, not from the user's
+3. widen the copied source root when the deployment uses parent-relative
+   references such as `${path.module}/../scripts/...`, so sibling files remain
+   reachable from the isolated working directory
+4. run `terraform`/`tofu` from the run-scoped workspace, not from the user's
    deployment directory
-4. avoid the configured remote backend by default
-5. use a run-scoped local state path inside the run workspace
-6. preserve backend config materialization and derived state inputs as run
+5. avoid the configured remote backend by default
+6. use a run-scoped local state path inside the run workspace
+7. preserve backend config materialization and derived state inputs as run
    artifacts for debugging
 
 This keeps source-tree mutation and backend-state mutation out of the user's
@@ -129,6 +132,12 @@ This override file takes precedence over any backend block in the original HCL,
 forcing Terraform/OpenTofu to use local state regardless of what the module
 normally configures. The `-state=<path>` flag then directs that local state to
 the run-scoped state file.
+
+To keep that local override deterministic, isolated workspace materialization
+must exclude copied backend partial config files such as `backend.auto.hcl` and
+`*.auto.tfbackend`. Those files are valid for a remote backend, but they can
+become invalid or conflicting once the isolated workspace forces `backend
+"local" {}`.
 
 The initial implementation should be conservative:
 
@@ -192,6 +201,8 @@ The backend may:
 - derive backend config values for the child process
 - materialize backend config files inside the run-scoped workspace
 - pass `-backend-config` arguments
+- exclude copied backend partial config files that would conflict with
+  isolated local-backend execution
 
 The backend may not:
 
@@ -205,6 +216,9 @@ Invariant after this change:
   backend
 - no external backend-shaping script is required for a `dress` run
 - generated backend config is attributable to a run and preserved for debugging
+- if the module needs sibling files via `${path.module}/../...`, the isolated
+  workspace preserves that relative layout by widening the copied source root
+  instead of mutating the user's source tree
 
 ### 6. Destructive escape hatch: `--disable-isolation`
 
@@ -428,6 +442,8 @@ When isolated rehearsal cannot be safe:
 - State is local and transient (never touches remote state)
 - `TF_VAR_dress_run_id` is injected for resource name isolation
 - Workspace is copied, so source files are not modified
+- Parent-relative module references such as `${path.module}/../scripts/...`
+  remain valid inside the isolated workspace
 - Failures preserve artifacts under the run directory
 
 ### What `dress` does not guarantee

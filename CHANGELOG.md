@@ -4,6 +4,20 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 
 ## [Unreleased]
 
+### Changed
+- Isolated workspace materialization now widens the copied source root when
+  Terraform/OpenTofu configuration uses parent-relative paths such as
+  `${path.module}/../scripts/...`, so sibling helper assets remain available
+  inside the run-scoped workspace.
+
+### Fixed
+- Excluded `backend.auto.hcl` and `*.auto.tfbackend` partial backend config
+  files from isolated workspaces so the generated local backend override does
+  not conflict with copied remote-backend settings.
+- Final CLI failure summaries now use warning styling for existing-resource
+  conflict failures when the underlying Terraform/OpenTofu error indicates a
+  collision such as `already exists`.
+
 ## [0.3.0] - 2026-04-15
 
 ### Added

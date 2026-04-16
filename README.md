@@ -172,6 +172,15 @@ can expose rehearsal-safe seams to `dress`.
 
 ## Local development workflow
 
+After cloning, wire up the tracked git hooks:
+
+```bash
+git config core.hooksPath hooks
+```
+
+This enables the pre-commit hook, which runs `cargo fmt` on staged changes
+to `src/` and delegates to beads for issue tracking.
+
 For local sibling-template testing, keep machine-specific paths out of git and
 use an explicit sourced env file such as `.dress.local.env`, which is ignored by
 the repo.

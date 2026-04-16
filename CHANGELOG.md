@@ -4,6 +4,13 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-16
+
+### Changed
+- Simplified string building to idiomatic Rust: `help_text()` uses a single
+  `format!` over a multiline string; `write_step_log()` uses `map().collect()`;
+  the curl script builder uses `push_str(&format!(...))` per fragment.
+
 ## [0.4.0] - 2026-04-16
 
 ### Changed

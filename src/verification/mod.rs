@@ -459,7 +459,10 @@ pub fn http_verification_plan(
     );
 
     for (key, value) in request.headers() {
-        script.push_str(&format!(" --header {}", shell_quote(&format!("{key}: {value}"))));
+        script.push_str(&format!(
+            " --header {}",
+            shell_quote(&format!("{key}: {value}"))
+        ));
     }
 
     if let Some(body) = request.body() {

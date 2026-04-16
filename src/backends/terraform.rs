@@ -269,8 +269,9 @@ impl TerraformBackend {
         for (key, value) in request.environment() {
             isolated_request = isolated_request.with_env(key.clone(), value.clone());
         }
-        isolated_request =
-            isolated_request.with_env("TF_VAR_dress_run_id", run_context.run_id().to_string());
+        isolated_request = isolated_request
+            .with_env("TF_VAR_dress_run_id", run_context.run_id().to_string())
+            .with_env("TF_VAR_is_dress_rehearsal", "true");
 
         Ok(isolated_request)
     }
@@ -724,6 +725,10 @@ mod tests {
             session.environment().get("TF_VAR_dress_run_id"),
             Some(&"run-fixed-terraform-init".to_string())
         );
+        assert_eq!(
+            session.environment().get("TF_VAR_is_dress_rehearsal"),
+            Some(&"true".to_string())
+        );
         // Backend override file should be generated in the working directory
         let override_path = session
             .working_directory()
@@ -869,6 +874,10 @@ data "external" "example" {
             session.environment().get("TF_VAR_dress_run_id"),
             Some(&"run-fixed-terraform-override".to_string())
         );
+        assert_eq!(
+            session.environment().get("TF_VAR_is_dress_rehearsal"),
+            Some(&"true".to_string())
+        );
 
         Ok(())
     }
@@ -986,6 +995,11 @@ data "external" "example" {
         assert_eq!(session.working_directory(), scenario_root);
         // Non-isolated mode should not inject TF_VAR_dress_run_id
         assert!(!session.environment().contains_key("TF_VAR_dress_run_id"));
+        assert!(
+            !session
+                .environment()
+                .contains_key("TF_VAR_is_dress_rehearsal")
+        );
 
         Ok(())
     }

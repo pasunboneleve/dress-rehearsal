@@ -133,14 +133,38 @@ export DRESS_WORKING_DIRECTORY=/path/to/deployment/root/env/dev
 export DRESS_TERRAFORM_BINARY=tofu
 ```
 
-The backend also injects `TF_VAR_dress_run_id` into Terraform/OpenTofu child
-processes during isolated rehearsal so modules can derive rehearsal-specific
-resource names without mutating the parent shell.
+The backend injects two Terraform/OpenTofu child-process variables during
+isolated rehearsal:
 
-## Module Naming Contract
+- `TF_VAR_is_dress_rehearsal=true` for explicit rehearsal-only conditionals
+- `TF_VAR_dress_run_id=<run-id>` when a module needs rehearsal-specific names
 
-For safe rehearsal coexistence, modules should use `TF_VAR_dress_run_id` to
-create unique resource names:
+This keeps the parent shell unchanged while giving HCL a small, explicit
+contract for isolated runs.
+
+## HCL Contract
+
+Prefer `var.is_dress_rehearsal` when a resource should be skipped entirely
+during rehearsal because it is non-idempotent, tombstone-prone, or otherwise
+not worth recreating on every isolated run.
+
+```hcl
+variable "is_dress_rehearsal" {
+  type        = bool
+  default     = false
+  description = "True when dress is running in isolated rehearsal mode"
+}
+
+resource "google_iam_workload_identity_pool" "github" {
+  count = var.is_dress_rehearsal ? 0 : 1
+
+  workload_identity_pool_id = var.pool_id
+  display_name              = var.pool_id
+}
+```
+
+Use `var.dress_run_id` when the resource can safely coexist and only needs a
+rehearsal-specific name:
 
 ```hcl
 variable "dress_run_id" {
@@ -158,9 +182,13 @@ resource "google_storage_bucket" "data" {
 }
 ```
 
-This ensures rehearsals create isolated resources while production deployments
-use standard names. See [docs/terraform-isolated-rehearsal.md](docs/terraform-isolated-rehearsal.md)
-for the full naming contract documentation.
+This keeps HCL boilerplate limited to two explicit concerns:
+
+- `is_dress_rehearsal` for skip-vs-run behavior
+- `dress_run_id` for name derivation when rehearsal-safe coexistence is needed
+
+See [docs/terraform-isolated-rehearsal.md](docs/terraform-isolated-rehearsal.md)
+for the full contract and tradeoffs.
 
 ## Local Dev Workflow
 

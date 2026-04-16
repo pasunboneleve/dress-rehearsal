@@ -145,25 +145,32 @@ The initial implementation should be conservative:
   deterministically
 - do not silently reuse the configured shared backend
 
-### 3. Resource identity isolation
+### 3. Resource identity isolation and rehearsal gating
 
 `dress` cannot guarantee safe coexistence if the Terraform/OpenTofu module
 hardcodes collision-prone names.
 
 The backend will therefore support a rehearsal naming contract by injecting
 rehearsal-specific variable overrides into the child backend process
-environment. The first contract should stay simple:
+environment. The contract should stay simple:
 
 - preserve parent `TF_VAR_*` values
 - overlay backend-owned rehearsal values only in the child process
-- include at least a stable per-run identifier that modules can use for naming
+- include an explicit rehearsal-mode boolean for HCL conditionals
+- include a stable per-run identifier when modules need rehearsal-safe naming
 
 Example contract shape:
 
 - parent shell may already provide `TF_VAR_environment=dev`
+- backend adds `TF_VAR_is_dress_rehearsal=true` in the child process only
 - backend adds `TF_VAR_dress_run_id=<run-id>` in the child process only
-- backend may also overlay a small set of clearly documented rehearsal
-  variables, such as a suffix or prefix derived from the run id
+
+The intended HCL usage is:
+
+- use `var.is_dress_rehearsal` when a resource should be skipped entirely in
+  rehearsal mode
+- use `var.dress_run_id` when a resource should still be created, but under a
+  rehearsal-safe name
 
 This keeps Terraform/OpenTofu naming semantics inside the backend boundary.
 Neither `Scenario` nor the core should know anything about `TF_VAR_*`.
@@ -178,6 +185,7 @@ Rules:
 - never mutate the parent shell
 - preserve incoming `TF_VAR_*` values unless explicitly shadowed by
   rehearsal-specific values
+- add `TF_VAR_is_dress_rehearsal=true` for isolated runs only
 - scrub ambient Terraform/OpenTofu backend-shaping environment that would break
   isolated local-backend execution, such as `TF_CLI_ARGS_init`, `TF_CLI_ARGS`,
   `TF_DATA_DIR`, or `TF_WORKSPACE`
@@ -360,6 +368,41 @@ Isolated mode protects Terraform/OpenTofu state, but it cannot prevent
 resource-name collisions in the cloud. If a module creates resources with
 hardcoded names, a rehearsal can still collide with live infrastructure.
 
+### The `TF_VAR_is_dress_rehearsal` variable
+
+In isolated mode, `dress` injects an explicit boolean mode signal into the
+child process environment:
+
+```
+TF_VAR_is_dress_rehearsal=true
+```
+
+Modules should use this variable when a resource should be omitted from
+rehearsal runs altogether.
+
+### Safe gating pattern
+
+```hcl
+variable "is_dress_rehearsal" {
+  type        = bool
+  default     = false
+  description = "True when dress is running in isolated rehearsal mode"
+}
+
+resource "google_iam_workload_identity_pool" "github" {
+  count = var.is_dress_rehearsal ? 0 : 1
+
+  workload_identity_pool_id = var.pool_id
+  display_name              = var.pool_id
+}
+```
+
+This is the preferred pattern for resources that are:
+
+- non-idempotent across repeated rehearsal runs
+- soft-delete or tombstone prone
+- expensive or slow enough that recreating them adds little rehearsal value
+
 ### The `TF_VAR_dress_run_id` variable
 
 In isolated mode, `dress` injects a per-run identifier into the child process
@@ -369,10 +412,10 @@ environment:
 TF_VAR_dress_run_id=run-<timestamp>-<sequence>
 ```
 
-Modules should use this variable to create unique resource names during
-rehearsal.
+Modules should use this variable to create unique resource names only when the
+resource can safely coexist across isolated runs.
 
-### Safe module pattern
+### Safe naming pattern
 
 A module that supports isolated rehearsal declares the variable and uses it
 for resource naming:
@@ -398,7 +441,7 @@ resource "google_storage_bucket" "data" {
 }
 ```
 
-When `dress` runs in isolated mode:
+When `dress` runs in isolated mode and the resource is not skipped:
 - `TF_VAR_dress_run_id` is set to the run id
 - Resources get unique names like `my-app-dev-run-0192abc-0001`
 - No collision with live `my-app-dev` resources
@@ -425,8 +468,8 @@ If you attempt to rehearse this module:
 
 ### Refusal behavior
 
-`dress` cannot detect unsafe naming patterns automatically. It relies on module
-authors to adopt the naming contract.
+`dress` cannot detect all unsafe naming or tombstone behaviors automatically.
+It relies on module authors to adopt the contract explicitly.
 
 When isolated rehearsal cannot be safe:
 - The backend fails closed rather than silently targeting shared resources
@@ -435,14 +478,17 @@ When isolated rehearsal cannot be safe:
 
 ### Guidelines for module authors
 
-1. Declare `variable "dress_run_id"` with an empty default
-2. Use it as a suffix or prefix for all globally unique resource names
-3. Test both paths: with and without the variable set
-4. Document which resources require the naming contract
+1. Declare `variable "is_dress_rehearsal"` with a default of `false`
+2. Use it to skip resources that are not rehearsal-safe to recreate or destroy
+3. Declare `variable "dress_run_id"` with an empty default for resources that
+   should still be created under rehearsal-safe names
+4. Test both paths: rehearsal and non-rehearsal
+5. Document which resources are skipped and which derive unique names
 
 ### What `dress` guarantees in isolated mode
 
 - State is local and transient (never touches remote state)
+- `TF_VAR_is_dress_rehearsal=true` is injected for explicit rehearsal gating
 - `TF_VAR_dress_run_id` is injected for resource name isolation
 - Workspace is copied, so source files are not modified
 - Parent-relative module references such as `${path.module}/../scripts/...`
@@ -451,6 +497,7 @@ When isolated rehearsal cannot be safe:
 
 ### What `dress` does not guarantee
 
-- Automatic safe naming for modules that don't use `dress_run_id`
+- Automatic safe naming or safe skip logic for modules that ignore the
+  rehearsal variables
 - Protection against hardcoded global identifiers
 - Cleanup of orphaned cloud resources if naming isolation fails

@@ -51,7 +51,7 @@ Useful optional settings:
 
 ```bash
 export DRESS_RUNS_ROOT=/tmp/dress-runs
-export DRESS_WORKING_DIRECTORY=/path/to/deployment/root/env/dev
+export DRESS_DEPLOYMENT_ROOT=/path/to/terraform/project/root
 export DRESS_TERRAFORM_BINARY=tofu
 export DRESS_TF_VAR_FILES=/path/to/common.tfvars:/path/to/dev.tfvars
 export DRESS_TF_BACKEND_CONFIG_FILES=/path/to/backend.hcl
@@ -61,6 +61,8 @@ Meaning:
 
 - `DRESS_RUNS_ROOT`
   overrides the default runs directory
+- `DRESS_DEPLOYMENT_ROOT`
+  the deployment project root
 - `DRESS_WORKING_DIRECTORY`
   narrows execution to a subdirectory under the deployment root
 - `DRESS_TERRAFORM_BINARY`
@@ -161,7 +163,6 @@ an explicit sourced file such as `.dress.local.env`:
 
 ```bash
 export DRESS_DEPLOYMENT_ROOT=../minimal-gcp-github-ci-template/infra
-export DRESS_WORKING_DIRECTORY=../minimal-gcp-github-ci-template/infra
 export DRESS_TERRAFORM_BINARY=tofu
 ```
 

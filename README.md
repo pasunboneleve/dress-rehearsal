@@ -5,9 +5,9 @@
 
 `dress` rehearses infrastructure changes end to end.
 
-It runs the selected backend tool in a run-scoped workspace, applies the
-infrastructure, records what happened, tears it down, and preserves evidence
-when a run fails.
+It runs Terraform in a run-scoped workspace, applies the
+infrastructure, records what happened, tears it down, and preserves
+evidence when a run fails.
 
 <br>
 
@@ -35,14 +35,15 @@ runs it end to end, observes what breaks, and tears it down safely.
 
 ## What it is for
 
-Use `dress` when you want to rehearse an infrastructure change before trusting
+Use `dress` to rehearse an infrastructure change before trusting
 it against shared state.
 
-Current tool boundary:
+Current scope:
 
-- current backend implementation: Terraform/OpenTofu
+- backend implementation: Terraform/OpenTofu (extensible to other
+  backends)
 - default execution mode: isolated rehearsal
-- lifecycle boundary: init, apply, output collection, destroy
+- lifecycle: init, apply, output collection, destroy
 - evidence preserved on failure: step logs, summaries, backend artifacts
 - no provider-service control surface in `dress` itself
 - no application-health or readiness checks
@@ -128,17 +129,11 @@ directory's configured backend state. Treat it as destructive.
 
 ## Configuration
 
-Explicit deployment-root override:
+Useful optional environment variables:
 
 ```bash
-export DRESS_DEPLOYMENT_ROOT=/path/to/deployment/root
-```
-
-Useful optional environment:
-
-```bash
+export DRESS_DEPLOYMENT_ROOT=/path/to/terraform/project/root
 export DRESS_RUNS_ROOT=/tmp/dress-runs
-export DRESS_WORKING_DIRECTORY=/path/to/deployment/root/env/dev
 export DRESS_TERRAFORM_BINARY=tofu
 ```
 
@@ -185,27 +180,8 @@ Example local-only file contents:
 
 ```bash
 export DRESS_DEPLOYMENT_ROOT=../minimal-aws-github-ci-template/infra
-export DRESS_WORKING_DIRECTORY=../minimal-aws-github-ci-template/infra
 export DRESS_TERRAFORM_BINARY=tofu
 ```
-
-or:
-
-```bash
-export DRESS_DEPLOYMENT_ROOT=../minimal-gcp-github-ci-template/infra
-export DRESS_WORKING_DIRECTORY=../minimal-gcp-github-ci-template/infra
-export DRESS_TERRAFORM_BINARY=tofu
-```
-
-Use it explicitly:
-
-```bash
-source .dress.local.env
-dress
-```
-
-`dress` does not load that file automatically. The state remains explicit in the
-shell session that sourced it.
 
 ## More detail
 

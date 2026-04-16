@@ -172,7 +172,14 @@ can expose rehearsal-safe seams to `dress`.
 
 ## Local development workflow
 
-After cloning, wire up the tracked git hooks:
+After cloning, wire up the tracked git hooks. If you use
+[direnv](https://direnv.net/), allow the `.envrc`:
+
+```bash
+direnv allow
+```
+
+Otherwise run it once manually:
 
 ```bash
 git config core.hooksPath hooks

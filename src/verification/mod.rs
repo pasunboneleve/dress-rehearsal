@@ -459,19 +459,14 @@ pub fn http_verification_plan(
     );
 
     for (key, value) in request.headers() {
-        script.push(' ');
-        script.push_str("--header ");
-        script.push_str(&shell_quote(&format!("{key}: {value}")));
+        script.push_str(&format!(" --header {}", shell_quote(&format!("{key}: {value}"))));
     }
 
     if let Some(body) = request.body() {
-        script.push(' ');
-        script.push_str("--data-raw ");
-        script.push_str(&shell_quote(body));
+        script.push_str(&format!(" --data-raw {}", shell_quote(body)));
     }
 
-    script.push(' ');
-    script.push_str(&shell_quote(url));
+    script.push_str(&format!(" {}", shell_quote(url)));
 
     command = command.with_args(["-c".to_string(), script]);
 

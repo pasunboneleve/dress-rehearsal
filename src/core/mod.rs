@@ -490,11 +490,10 @@ fn write_step_log(path: &Path, events: &[StepEvent]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut rendered = String::new();
-    for event in events {
-        rendered.push_str(&render_step_event(event));
-        rendered.push('\n');
-    }
+    let rendered: String = events
+        .iter()
+        .map(|e| format!("{}\n", render_step_event(e)))
+        .collect();
     fs::write(path, rendered)
 }
 

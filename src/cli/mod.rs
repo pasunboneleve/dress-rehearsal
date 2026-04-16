@@ -10,7 +10,6 @@ use owo_colors::OwoColorize;
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fmt::Write as _;
 use std::io::{self, IsTerminal, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process;
@@ -403,101 +402,43 @@ fn version_text() -> String {
 }
 
 fn help_text() -> String {
-    let mut text = String::new();
-    let _ = writeln!(text, "dress {}", VERSION);
-    let _ = writeln!(text);
-    let _ = writeln!(
-        text,
-        "Infrastructure rehearsal CLI for backend-tool apply/destroy runs."
-    );
-    let _ = writeln!(text);
-    let _ = writeln!(text, "Current first-version scope:");
-    let _ = writeln!(text, "- runs one backend rehearsal flow");
-    let _ = writeln!(text, "- current backend implementation: Terraform/OpenTofu");
-    let _ = writeln!(
-        text,
-        "- captures step logs, summaries, and preserved artifacts"
-    );
-    let _ = writeln!(
-        text,
-        "- does not model provider services or perform application health checks"
-    );
-    let _ = writeln!(text);
-    let _ = writeln!(text, "What happens when you run `dress`:");
-    let _ = writeln!(
-        text,
-        "- loads the backend rehearsal configuration from explicit environment variables and the current working directory"
-    );
-    let _ = writeln!(
-        text,
-        "- materializes an isolated run directory under `DRESS_RUNS_ROOT` or `<deployment-root>/.dress-runs`"
-    );
-    let _ = writeln!(
-        text,
-        "- runs backend init/apply, collects outputs, and then runs backend destroy"
-    );
-    let _ = writeln!(
-        text,
-        "- preserves failure evidence when apply, verification, or cleanup fails"
-    );
-    let _ = writeln!(text);
-    let _ = writeln!(text, "Minimal requirements:");
-    let _ = writeln!(
-        text,
-        "- run `dress` from a backend deployment directory, or set `DRESS_DEPLOYMENT_ROOT` explicitly"
-    );
-    let _ = writeln!(
-        text,
-        "- Terraform or OpenTofu is installed, unless `DRESS_TERRAFORM_BINARY` points elsewhere"
-    );
-    let _ = writeln!(
-        text,
-        "- the selected backend configuration can complete apply and destroy from that directory"
-    );
-    let _ = writeln!(text);
-    let _ = writeln!(text, "Important environment variables:");
-    let _ = writeln!(text, "- optional override: `DRESS_DEPLOYMENT_ROOT`");
-    let _ = writeln!(
-        text,
-        "  when unset, `dress` uses the current working directory as the deployment root"
-    );
-    let _ = writeln!(text, "- optional: `DRESS_RUNS_ROOT`");
-    let _ = writeln!(text, "- optional: `DRESS_WORKING_DIRECTORY`");
-    let _ = writeln!(
-        text,
-        "- optional: `DRESS_TERRAFORM_BINARY` (`terraform`, `tofu`, or a custom path)"
-    );
-    let _ = writeln!(text, "- optional: `DRESS_TF_VAR_FILES` (path list)");
-    let _ = writeln!(
-        text,
-        "- optional: `DRESS_TF_BACKEND_CONFIG_FILES` (path list)"
-    );
-    let _ = writeln!(text);
-    let _ = writeln!(text, "Commands:");
-    let _ = writeln!(text, "- `dress` runs the current backend rehearsal flow");
-    let _ = writeln!(
-        text,
-        "- `dress version` and `dress --version` print the CLI version"
-    );
-    let _ = writeln!(text);
-    let _ = writeln!(text, "Flags:");
-    let _ = writeln!(
-        text,
-        "- `--disable-isolation` runs against shared state with no isolation guarantees"
-    );
-    let _ = writeln!(
-        text,
-        "  WARNING: this can modify or destroy real infrastructure"
-    );
-    let _ = writeln!(
-        text,
-        "  requires interactive confirmation or `--yes` to proceed"
-    );
-    let _ = writeln!(
-        text,
-        "- `--yes` or `-y` skips interactive confirmation for destructive operations"
-    );
-    text
+    format!(
+        "\
+dress {VERSION}
+
+Rehearse infrastructure changes end to end before it touches shared state.
+
+What `dress` does:
+- runs Terraform/OpenTofu in an isolated, run-scoped workspace
+- applies your configuration, collects outputs, then destroys it
+- records step logs and preserves failure artifacts
+
+Requirements:
+- run from a Terraform/OpenTofu deployment directory, or set `DRESS_DEPLOYMENT_ROOT`
+- Terraform or OpenTofu must be available (`DRESS_TERRAFORM_BINARY` to override)
+- your configuration must support apply and destroy
+
+Environment:
+- `DRESS_DEPLOYMENT_ROOT`        override deployment root (defaults to cwd)
+- `DRESS_RUNS_ROOT`              where run artifacts are stored
+- `DRESS_WORKING_DIRECTORY`      Terraform working directory override
+- `DRESS_TERRAFORM_BINARY`       `terraform`, `tofu`, or custom path
+- `DRESS_TF_VAR_FILES`           var-file list
+- `DRESS_TF_BACKEND_CONFIG_FILES` backend config list
+
+Commands:
+- `dress` runs the rehearsal
+- `dress version`, `dress --version`
+
+Flags:
+- `--disable-isolation`
+  run against shared state (no safety guarantees)
+  WARNING: may modify or destroy real infrastructure
+  requires confirmation or `--yes`
+- `--yes`, `-y`
+  skip confirmation for destructive operations
+"
+    )
 }
 
 #[cfg(test)]
@@ -620,12 +561,11 @@ mod tests {
     fn help_text_describes_current_scope_honestly() {
         let help = help_text();
 
-        assert!(help.contains("Infrastructure rehearsal CLI"));
-        assert!(help.contains("current backend implementation: Terraform/OpenTofu"));
-        assert!(help.contains("does not model provider services"));
-        assert!(help.contains("`dress` runs the current backend rehearsal flow"));
+        assert!(help.contains("Rehearse infrastructure changes end to end"));
+        assert!(help.contains("Terraform/OpenTofu"));
+        assert!(help.contains("`dress` runs the rehearsal"));
         assert!(help.contains("`DRESS_DEPLOYMENT_ROOT`"));
-        assert!(help.contains("current working directory as the deployment root"));
+        assert!(help.contains("defaults to cwd"));
     }
 
     #[test]

@@ -43,3 +43,4 @@
 {"id":"int-2d4bd6a7","kind":"field_change","created_at":"2026-04-16T02:12:53.647520339Z","actor":"Daniel Vianna","issue_id":"dress-rehearsal-xxy.9","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-5ba87b12","kind":"field_change","created_at":"2026-04-16T02:12:54.428622077Z","actor":"Daniel Vianna","issue_id":"dress-rehearsal-xxy.10","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-6d061a38","kind":"field_change","created_at":"2026-04-16T02:17:25.426228558Z","actor":"Daniel Vianna","issue_id":"dress-rehearsal-5br","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-5be6a7a6","kind":"field_change","created_at":"2026-04-16T02:55:50.924626031Z","actor":"Daniel Vianna","issue_id":"dress-rehearsal-37k","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}

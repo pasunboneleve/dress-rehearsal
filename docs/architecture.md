@@ -13,7 +13,7 @@ The current executable path is narrow:
 The architecture matters because the tool must stay easy to change without
 turning into a pile of shell glue.
 
-## Execution Flow
+## Execution flow
 
 Current run flow:
 
@@ -32,7 +32,7 @@ Current run flow:
 9. summaries, step logs, metadata, and preserved artifacts are written under the
    run directory
 
-## Core Types
+## Core types
 
 ### `RunContext`
 
@@ -114,7 +114,7 @@ The current tool does not perform application-health or readiness testing. It
 uses scenario discovery to build verification inputs, then records whether the
 run produced the expected surfaced values and whether cleanup completed.
 
-## Terraform/OpenTofu Boundary
+## Terraform/OpenTofu boundary
 
 The current backend implementation lives in `src/backends/terraform.rs`.
 
@@ -138,7 +138,7 @@ The core orchestration code does not know about:
 
 That is the intended boundary.
 
-## Safety Boundary
+## Safety boundary
 
 The tool's safety model has two layers:
 
@@ -168,7 +168,7 @@ Those variables give the module under test explicit seams for:
 `dress` cannot make hardcoded resource identities safe by itself. That remains
 the module's responsibility.
 
-## Failure Semantics
+## Failure semantics
 
 The tool fails loudly and preserves evidence.
 
@@ -189,7 +189,7 @@ The CLI then reports:
 - step log path
 - preserved-artifacts path
 
-## Current Scope
+## Current scope
 
 Implemented now:
 

@@ -5,7 +5,7 @@
 It runs the backend tool, records what happened, tears the run down, and keeps
 failure evidence when something breaks.
 
-## What You Need
+## What you need
 
 - a Terraform or OpenTofu deployment directory
 - `terraform` or `tofu` installed, unless `DRESS_TERRAFORM_BINARY` points to a
@@ -19,7 +19,7 @@ Supported runtime targets today:
 
 Windows is not supported.
 
-## First Run
+## First run
 
 From the root of your HCL code:
 
@@ -39,7 +39,7 @@ dress --version
 dress version
 ```
 
-## Key Environment Variables
+## Key environment variables
 
 Optional deployment-root override:
 
@@ -94,7 +94,7 @@ Isolation protects backend state. It does not make fixed cloud resource names
 safe by itself. Modules still need explicit seams for non-idempotent or
 collision-prone resources.
 
-## Destructive Mode
+## Destructive mode
 
 Use `--disable-isolation` only when you mean to run against the deployment
 directory's configured backend state:
@@ -136,7 +136,7 @@ Useful files:
 - `artifacts/backends/`
 - `preserved/`
 
-## Inspecting Failures
+## Inspecting failures
 
 When a run fails, the CLI prints:
 
@@ -154,7 +154,7 @@ Start with:
 3. the failed step's stdout/stderr files under `artifacts/steps/`
 4. backend artifacts under `artifacts/backends/`
 
-## Local Template Testing
+## Local template testing
 
 For local sibling-template work, keep machine-specific paths out of git and use
 an explicit sourced file such as `.dress.local.env`:

@@ -1,4 +1,4 @@
-# Documentation Audit
+# Documentation audit
 
 This audit exists to decide what the current documentation set is, what each
 file is doing now, and what should happen to it before rewrite work starts.
@@ -31,13 +31,13 @@ user documentation rewrite target:
 | `docs/terraform-isolated-rehearsal.md` | mixed operator/maintainer/design audience | design-heavy, behavior-heavy, and overly long for its current role | archive as design history; redistribute current behavior into rewritten user and maintainer docs | It contains real current behavior, but the tone and structure are design-doc oriented. The live parts belong in the rewritten README, quickstart/reference, and architecture/backend docs. |
 | `docs/static/craddle-will-rock-rehearsal-1937.jpg` | asset only | current | keep in place | It is a README asset, not prose documentation. |
 
-## Files Outside The Rewrite Set
+## Files outside the rewrite set
 
 | File | Role | Decision |
 | --- | --- | --- |
 | `AGENTS.md` | maintainer/agent operating instructions | keep as-is for now; not part of the user-doc rewrite set |
 
-## Current Problems To Correct In The Rewrite
+## Current problems to correct in the rewrite
 
 ### `README.md`
 
@@ -61,7 +61,7 @@ user documentation rewrite target:
 - overlaps with what should become user quickstart/reference and maintainer
   architecture/extension docs
 
-## Outcome Required From The Next Bead
+## Outcome required from the next bead
 
 The next planning step must define:
 

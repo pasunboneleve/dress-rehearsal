@@ -1,4 +1,4 @@
-# Target Documentation Hierarchy
+# Target documentation hierarchy
 
 This plan turns the audit into the concrete documentation tree that the rewrite
 should produce.
@@ -6,7 +6,7 @@ should produce.
 The goal is a small doc set for real users of the implemented tool, with
 separate maintainer material only where the code actually needs it.
 
-## Target File Tree
+## Target file tree
 
 ```text
 README.md
@@ -21,7 +21,7 @@ docs/
     craddle-will-rock-rehearsal-1937.jpg
 ```
 
-## File Mapping
+## File mapping
 
 | Current file | Target outcome | Target path | Notes |
 | --- | --- | --- | --- |
@@ -33,7 +33,7 @@ docs/
 | none | new file | `docs/backend-extension.md` | Maintainer doc for the real internal backend extension seam. |
 | `docs/static/craddle-will-rock-rehearsal-1937.jpg` | keep in place | `docs/static/craddle-will-rock-rehearsal-1937.jpg` | Asset only. No rewrite. |
 
-## Audience Split
+## Audience split
 
 ### User-facing entry points
 
@@ -70,7 +70,7 @@ These should remain available for project history, but they should not be
 treated as the main manual and should not be linked as primary guidance from
 the rewritten README.
 
-## Writing-Bead Execution Notes
+## Writing-bead execution notes
 
 ### `dress-rehearsal-xxy.3`
 
@@ -119,7 +119,7 @@ This bead should document the actual internal backend seam now exposed in:
 - `src/cli/mod.rs`
 - `src/core/mod.rs`
 
-## Archive Rules
+## Archive rules
 
 - Archived docs must move under `docs/archive/`.
 - Archived docs are kept for project history, not as normative user guidance.

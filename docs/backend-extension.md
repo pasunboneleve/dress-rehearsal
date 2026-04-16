@@ -1,4 +1,4 @@
-# Backend Extension
+# Backend extension
 
 This repository does not implement dynamic plugins.
 
@@ -6,7 +6,7 @@ The extension seam is internal Rust code. To add a new backend, add a new
 `DeploymentBackend` implementation and wire it into the existing executable
 path.
 
-## Where The Seam Lives
+## Where the seam lives
 
 Core backend contract:
 
@@ -23,7 +23,7 @@ Current orchestration path that consumes the backend:
 - `src/scenarios/mod.rs`
 - `src/scenarios/backend_rehearsal.rs`
 
-## What A Backend Must Implement
+## What a backend must implement
 
 Implement `DeploymentBackend`:
 
@@ -44,7 +44,7 @@ Meaning:
 
 The backend owns the tool-specific details. The core owns orchestration order.
 
-## Backend Inputs And Session State
+## Backend inputs and session state
 
 The scenario hands the backend a `BackendRequest`.
 
@@ -66,7 +66,7 @@ The backend turns that into a `BackendSession`, which carries:
 Use `BackendSession` for all run-local backend paths. Do not reconstruct backend
 paths ad hoc in the backend implementation.
 
-## What Must Stay Inside The Backend
+## What must stay inside the backend
 
 Keep backend-tool semantics inside the backend implementation.
 
@@ -91,7 +91,7 @@ Do not push those concerns into:
 If a second backend needs similar behavior, extract only the minimum shared
 helper that reduces duplication without making the contract harder to read.
 
-## Wiring A New Backend
+## Wiring a new backend
 
 Minimum work:
 
@@ -105,7 +105,7 @@ Minimum work:
 Today the CLI hardwires `TerraformBackend`. That is acceptable because there is
 only one backend family in the repository.
 
-## Invariants A Backend Must Preserve
+## Invariants a backend must preserve
 
 ### Cleanup
 
@@ -134,7 +134,7 @@ only one backend family in the repository.
 - the backend should return normalized outputs rather than exposing raw
   tool-specific output structures to the core
 
-## Testing A Backend
+## Testing a backend
 
 At minimum, cover:
 

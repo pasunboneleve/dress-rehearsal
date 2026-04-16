@@ -1,248 +1,209 @@
 # Architecture
 
-`dress-rehearsal` is designed as a small execution engine for infrastructure
-rehearsal.
+`dress-rehearsal` is a small orchestration layer around a deployment backend.
 
-## Core Concepts
+The current executable path is narrow:
+
+- one CLI command surface: `dress`
+- one backend family: Terraform/OpenTofu
+- one generic scenario shape: backend rehearsal
+- one verification posture: observe lifecycle success or failure and preserve
+  evidence
+
+The architecture matters because the tool must stay easy to change without
+turning into a pile of shell glue.
+
+## Execution flow
+
+Current run flow:
+
+1. the CLI loads configuration from explicit environment variables and the
+   current working directory
+2. the CLI selects an execution mode: isolated by default, non-isolated only
+   through `--disable-isolation`
+3. `rehearse()` creates a `RunContext`
+4. the `Scenario` prepares backend inputs and any scenario-local setup
+5. the `DeploymentBackend` initializes, deploys, collects outputs, and exposes
+   a destroy action
+6. the `Scenario` discovers surfaced values and verification inputs from the
+   backend result
+7. verification runs
+8. `CleanupManager` tears the run down in reverse registration order
+9. summaries, step logs, metadata, and preserved artifacts are written under the
+   run directory
+
+## Core types
 
 ### `RunContext`
 
-Owns the identity and filesystem shape of a rehearsal run:
-- run id
-- workdir
-- derived artifact paths
-- preserved failure artifacts
-- materialized metadata
+`RunContext` owns the filesystem identity of one run.
+
+It creates and names:
+
+- the run root
+- the work directory
+- the artifacts directory
+- the preserved-artifacts directory
+- `run-metadata.txt`
+
+The rest of the system receives explicit paths from `RunContext` instead of
+reconstructing them ad hoc.
 
 ### `StepRunner`
 
-Owns consistent step execution:
-- step naming
-- stdout/stderr capture
-- live logging
-- uniform success/failure semantics
+`StepRunner` owns named process execution.
+
+It provides:
+
+- stable step names
+- stdout and stderr capture
+- live terminal logging
+- recorded step events
+- consistent success and failure reporting
+
+The backend and scenario layers build `StepCommand` values. `StepRunner`
+executes them.
 
 ### `CleanupManager`
 
-Owns teardown behavior:
-- cleanup registration
-- reverse-order cleanup
-- failure-triggered cleanup
-- explicit teardown
-- recovery hints and preserved artifacts
+`CleanupManager` owns teardown.
+
+It registers cleanup actions as the run progresses, executes them in reverse
+order, and distinguishes normal teardown from failure-triggered cleanup.
+
+This is what keeps cleanup structural instead of optional.
 
 ### `DeploymentBackend`
 
-Owns deployment engine behavior behind a narrow interface:
-- initialize backend state
-- deploy/apply changes
-- fetch outputs
-- destroy/teardown
+`DeploymentBackend` is the deployment-tool seam.
 
-Initial target: Terraform/OpenTofu.
-Future room: CloudFormation.
+It must provide:
+
+- `initialize`
+- `deploy`
+- `outputs`
+- `destroy_action`
+
+The core does not know how the backend tool shapes state, environment, backend
+config, or child-process arguments. That detail belongs in the backend
+implementation.
 
 ### `Scenario`
 
-If retained at all, owns only a minimal provider-agnostic contract around a
-backend-tool rehearsal:
-- prerequisite checks
-- backend input shaping when needed
-- discovery of backend-managed outputs when needed
+`Scenario` is still present, but it is intentionally narrow.
 
-A scenario does not own:
-- direct cloud-service lifecycle control
-- service-specific teardown commands
-- provider-service concepts or service families
-- application-level correctness checks
+It owns:
 
-### `VerificationSpec`
+- preparation of backend inputs
+- optional preparation steps
+- optional scenario-local cleanup actions
+- discovery of surfaced values and verification inputs from backend outputs
 
-For the first implementation, verification is lifecycle verification:
-- did apply complete successfully
-- did destroy/cleanup complete successfully
-- were logs, summaries, and failure artifacts preserved
+It does not own:
 
-Application-level verification such as HTTP health checks, readiness polling, and
-response assertions is explicitly out of scope for the first version.
+- direct cloud-service lifecycle commands
+- provider-service concepts
+- backend-specific state shaping
+- deployment or destroy execution
 
-## Testing Model
+### Verification
 
-The architecture should support three distinct testing levels:
+Verification is observational.
 
-### Unit tests
+The current tool does not perform application-health or readiness testing. It
+uses scenario discovery to build verification inputs, then records whether the
+run produced the expected surfaced values and whether cleanup completed.
 
-Used for:
-- pure state transitions
-- path derivation
-- failure classification
-- cleanup ordering
-- verification assertions
+## Terraform/OpenTofu boundary
 
-These tests should not require external processes or real infrastructure.
+The current backend implementation lives in `src/backends/terraform.rs`.
 
-### Mock-environment tests
+Terraform/OpenTofu-specific behavior stays there:
 
-Used for:
-- executable-level behavior with abstracted external dependencies
-- backend and scenario interactions behind narrow interfaces
-- process and output handling without real cloud infrastructure
+- binary selection
+- isolated versus non-isolated execution behavior
+- run-scoped workspace materialization
+- local-state forcing in isolated mode
+- child-process environment shaping
+- backend config file handling
+- backend JSON output parsing
 
-These tests should exercise the harness as a system while replacing the
-external environment with controllable fakes or test doubles.
+The core orchestration code does not know about:
 
-### Real integration tests
+- `TF_VAR_*`
+- `TF_CLI_ARGS*`
+- backend override files
+- `-state=...`
+- backend config file formats
 
-Used for:
-- one minimal but real deployment workflow
-- real verification against a deployed surface
-- real teardown and artifact preservation behavior
+That is the intended boundary.
 
-These tests should target a minimal external environment and remain narrow
-enough to support iterative development rather than broad platform coverage.
+## Safety boundary
 
-## Non-Goals
+The tool's safety model has two layers:
 
-- no dynamic plugin system
-- no generic workflow engine
-- no YAML DSL
-- no automatic inference of arbitrary infrastructure layouts
-- no coupling to `devloop` in the core architecture
-- no provider-service model inside `dress-rehearsal`
+### Filesystem and backend-state isolation
 
-## Early Shape
+Isolated mode creates a run-scoped workspace and local transient backend state
+under `.dress-runs/`.
 
-The first implementation path should move one real backend-tool happy path
-through these boundaries:
+That keeps:
 
-Initial concrete target:
-- backend: Terraform/OpenTofu
-- verification: lifecycle observability only
+- run artifacts attributable to one run
+- backend state separate from the source working tree
+- source deployment files free from run-time mutation
 
-Execution path:
+### HCL-owned resource isolation
 
-1. CLI parses a command into a request.
-2. `RunContext` materializes an isolated run.
-3. `Scenario` prepares minimal prerequisites and backend inputs.
-4. `DeploymentBackend` applies infrastructure.
-5. Observability artifacts are recorded for the apply result.
-6. `CleanupManager` tears the run down or preserves artifacts on failure.
+The backend also overlays:
 
-## Failure Semantics
+- `TF_VAR_is_dress_rehearsal=true`
+- `TF_VAR_dress_run_id=<run-id>`
 
-- Step failure propagates uniformly through `StepRunner`.
-- By default, failure should trigger registered cleanup in reverse order.
-- Artifact preservation should happen before the process exits on failure.
-- Explicit teardown remains available for operator-driven recovery.
-- The early implementation should prefer deterministic teardown over partial
-  rollback heuristics.
-- The first version treats backend apply/destroy as the rehearsal boundary.
-- Failures must be diagnosable from preserved step logs, summaries, and backend artifacts.
-- The harness must not issue direct cloud-service lifecycle commands outside the backend contract.
-- The harness must not model provider services or require provider-service
-  concepts in order to run the chosen backend tool.
+Those variables give the module under test explicit seams for:
 
-## Boundary Notes
+- skipping non-rehearsal-safe resources
+- deriving rehearsal-safe names
 
-- The selected backend tool is the sole cloud-facing control surface.
-  Cloud-provider APIs should be reached only through that backend tool, not
-  through provider-aware orchestration in `dress-rehearsal`.
-- Scenario bootstrap remains inside `ScenarioPreparation`: it may add
-  prerequisite steps and scenario-owned cleanup actions before backend
-  initialization, but it must not implicitly register backend cleanup or
-  reshape teardown order across that boundary.
-- Any temporary scenario-like abstraction must remain generic to backend
-  invocation. Provider-service targets such as ECS services or Lambda functions
-  are outside the intended architecture.
-- Verification wiring begins only after `Scenario::discover` receives backend
-  outputs. Changing verification labels, metadata, requests, or assertions must
-  not change deployment inputs or cleanup ordering.
-- Any cleanup needed after verification failure must already be registered
-  through scenario preparation, scenario discovery, or the backend destroy
-  action. Verification itself is not a lifecycle control surface.
+`dress` cannot make hardcoded resource identities safe by itself. That remains
+the module's responsibility.
 
-## Operational Invariants
+## Failure semantics
 
-### Credentials and secrets
+The tool fails loudly and preserves evidence.
 
-- Secret values must not be persisted in run metadata by default.
-- Backends and scenarios must receive credentials through explicit inputs,
-  not hidden ambient coupling.
-- Secret injection rules should be testable at the boundary where they enter a
-  backend or scenario.
+Failure behavior:
 
-### Concurrency and isolation
+- step failures propagate through `StepRunner`
+- failed runs still attempt cleanup
+- cleanup runs in reverse registration order
+- failure summaries and step logs are written into the run directory
+- failed-step stdout and stderr can be preserved for diagnosis
 
-- `RunContext` must make local filesystem collisions impossible for concurrent
-  runs on the same machine.
-- Backend state isolation must be explicit per run.
-- Preserved artifacts must remain attributable to a single run id.
-- Terraform/OpenTofu-specific isolation mechanics, including child-process
-  `TF_VAR_*` overlays and backend config shaping, belong inside the backend
-  implementation rather than the core orchestration types.
+The CLI then reports:
 
-See [terraform-isolated-rehearsal.md](/home/dmvianna/src/projects/dress-rehearsal/docs/terraform-isolated-rehearsal.md)
-for the current isolated rehearsal design.
+- run id
+- run directory
+- failure stage
+- summary path
+- step log path
+- preserved-artifacts path
 
-### Observability
+## Current scope
 
-- `StepRunner` should support human-readable CLI logs first.
-- Structured logs may be added later, but should not complicate the first happy
-  path.
-- CI usability matters: step names, live process output, and failure summaries
-  should remain clear in non-interactive environments.
+Implemented now:
 
-## Current Narrow Assumptions
+- default isolated rehearsal
+- explicit destructive escape hatch with `--disable-isolation`
+- Terraform/OpenTofu backend
+- backend-driven apply/output/destroy cycle
+- scenario preparation and discovery
+- recorded cleanup and artifact preservation
 
-### POSIX process model only
+Not implemented now:
 
-- Current limitation: step execution and test fixtures assume POSIX tools such
-  as `/bin/sh`, `printf`, and standard filesystem semantics. Windows is not a
-  supported runtime target today.
-- Justification: Linux and macOS are the only supported release targets, and a
-  POSIX-first execution model keeps early failure artifacts and shell commands
-  easy to inspect.
-- Future extraction point: introduce a platform-aware command construction
-  boundary only when a real non-POSIX target is required.
-
-### One backend family
-
-- Current limitation: `DeploymentBackend` currently has one concrete family,
-  Terraform/OpenTofu.
-- Justification: the first backend exists to prove the apply/destroy lifecycle
-  boundary before broadening the configuration surface to additional tools.
-- Future extraction point: add a second real backend before generalizing shared
-  backend helpers or CLI/backend selection rules.
-
-### One scenario family
-
-- Current limitation: there is still only one generic runtime shape around the
-  backend tool, so the abstraction has not yet been proven across materially
-  different backend-input or output-discovery needs.
-- Justification: one narrow, provider-agnostic path is enough to stabilize the
-  orchestration boundary before deciding whether the abstraction should broaden
-  or collapse further.
-- Future extraction point: only broaden the abstraction if a second real backend
-  tool or generic rehearsal mode needs different preparation or discovery
-  behavior.
-
-### Verification stays observational
-
-- Current limitation: verification wiring may translate discovered outputs into
-  named-value or HTTP checks, but it is not allowed to own service lifecycle
-  commands or cleanup registration.
-- Justification: keeping verification observational preserves the boundary where
-  deployment and teardown stay owned by the backend and cleanup manager.
-- Future extraction point: expand `VerificationSpec` only when a second real
-  verification mode requires new inputs without crossing into lifecycle
-  control.
-
-### Run artifacts stay local and filesystem-backed
-
-- Current limitation: rehearsal evidence is written under `RunContext` on the
-  local filesystem rather than through a pluggable artifact sink.
-- Justification: local paths are the simplest way to keep summaries, step logs,
-  and preserved artifacts attributable to a single run during early
-  architecture work.
-- Future extraction point: add an artifact publishing boundary only when a real
-  remote sink or CI retention workflow needs the same evidence model.
+- multiple backends
+- dynamic plugin loading
+- provider-service orchestration
+- application-level health checks
+- Windows support

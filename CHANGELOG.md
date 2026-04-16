@@ -4,11 +4,22 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
 
 ## [Unreleased]
 
-## [0.3.1] - 2026-04-16
+## [0.4.0] - 2026-04-16
 
 ### Changed
 - Release publishing now uses `softprops/action-gh-release@v3`, which is
   compatible with the GitHub Actions Node 24 runtime.
+- Isolated Terraform/OpenTofu runs now inject
+  `TF_VAR_is_dress_rehearsal=true` in addition to `TF_VAR_dress_run_id`,
+  making rehearsal-only conditionals explicit in HCL.
+- The Terraform/OpenTofu contract now distinguishes between:
+  - `is_dress_rehearsal` for skipping non-idempotent or tombstone-prone
+    resources
+  - `dress_run_id` for deriving rehearsal-safe resource names when resources
+    should still be created during rehearsal
+- Rewrote the repository docs as a manual for the implemented tool, with a
+  user-facing README, operator quickstart, backend-extension guide, and archive
+  split between live documentation and historical design notes.
 
 ### Fixed
 - Isolated Terraform/OpenTofu runs now scrub ambient backend-shaping

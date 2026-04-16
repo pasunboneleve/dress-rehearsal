@@ -3,12 +3,11 @@
 [![Linux CI](https://github.com/pasunboneleve/dress-rehearsal/actions/workflows/linux-ci.yml/badge.svg)](https://github.com/pasunboneleve/dress-rehearsal/actions/workflows/linux-ci.yml)
 [![macOS CI](https://github.com/pasunboneleve/dress-rehearsal/actions/workflows/macos-ci.yml/badge.svg)](https://github.com/pasunboneleve/dress-rehearsal/actions/workflows/macos-ci.yml)
 
-`dress` is a Rust-based infrastructure integration harness.
+`dress` rehearses infrastructure changes end to end.
 
-Most infrastructure changes are never rehearsed end-to-end before they are
-needed live. `dress-rehearsal` exists to make that rehearsal explicit:
-materialize isolated context, apply infrastructure, tear it down, and preserve
-evidence when things fail.
+It runs Terraform in a run-scoped workspace, applies the
+infrastructure, records what happened, tears it down, and preserves
+evidence when a run fails.
 
 <br>
 
@@ -32,35 +31,30 @@ evidence when things fail.
 A dress rehearsal is the full run before the real performance.
 
 This tool does the same for infrastructure:\
-runs it end-to-end, observes what breaks, and tears it down safely.
+runs it end to end, observes what breaks, and tears it down safely.
+
+## What it is for
+
+Use `dress` to rehearse an infrastructure change before trusting
+it against shared state.
 
 Current scope:
-- establish architecture and execution boundaries
-- plan phased implementation work
-- keep the initial code skeleton narrow and structural
 
-First concrete target:
-- backend-tool rehearsal
-- current implementation: Terraform/OpenTofu
-- isolated rehearsal is now the default execution path
-- lifecycle observability for apply/destroy, not application correctness
-- no provider-service model in the intended architecture
+- backend implementation: Terraform/OpenTofu (extensible to other
+  backends)
+- default execution mode: isolated rehearsal
+- lifecycle: init, apply, output collection, destroy
+- evidence preserved on failure: step logs, summaries, backend artifacts
+- no provider-service control surface in `dress` itself
+- no application-health or readiness checks
 
-Not implemented yet:
-- broad backend coverage
-- application-level verification
-
-Strict boundary:
-- `dress-rehearsal` should operate the selected infrastructure backend tool and generic rehearsal
-  mechanics only
-- cloud providers must be driven by the backend tool itself, not by
-  provider-service-aware logic in `dress-rehearsal`
-- any current AWS-specific naming in the codebase is legacy implementation debt,
-  not intended product scope
+`dress` operates the backend tool and the rehearsal mechanics around it.
+Cloud-provider APIs are reached through that backend tool, not through
+provider-aware logic in `dress`.
 
 ## Install
 
-Install the latest published `main` branch directly from GitHub:
+Install from GitHub:
 
 ```bash
 cargo install --git https://github.com/pasunboneleve/dress-rehearsal.git
@@ -78,13 +72,23 @@ Supported platforms are currently:
 
 Windows is not currently supported or tested.
 
-## Usage
+## Quick start
 
-Run the current backend rehearsal flow:
+From the root of your HCL code:
 
 ```bash
 dress
 ```
+
+What `dress` does by default:
+
+- uses the current working directory as the deployment root unless
+  `DRESS_DEPLOYMENT_ROOT` is set
+- creates a run directory under `DRESS_RUNS_ROOT` or
+  `<deployment-root>/.dress-runs`
+- runs Terraform/OpenTofu in isolated mode by default
+- collects outputs and then runs destroy
+- preserves run artifacts when a step fails
 
 Show help or version:
 
@@ -101,68 +105,72 @@ dress --disable-isolation        # requires interactive confirmation
 dress --disable-isolation --yes  # skips confirmation (for automation)
 ```
 
-Default behavior:
+## Safety model
 
-`dress` uses the current working directory as the deployment root when
-`DRESS_DEPLOYMENT_ROOT` is not set. So if you run it from the root of your HCL
-code, you do not need to export that variable.
+Isolated rehearsal is the default.
 
-By default, the Terraform/OpenTofu backend now rehearses from a run-scoped
-copied workspace with a run-scoped local state file under `.dress-runs/`. That
-isolates backend state from the source working tree, but it does not make
-hardcoded cloud resource names safe by itself. Modules still need explicit
-naming seams for collision-safe rehearsal coexistence.
+In isolated mode, the Terraform/OpenTofu backend:
 
-The isolated workspace keeps parent-relative module paths working when your
-configuration refers to sibling files such as `${path.module}/../scripts/...`.
-It also excludes copied `backend.auto.hcl` and `*.auto.tfbackend` partial
-backend config files so the run-scoped local backend override does not conflict
-with remote-backend settings from the source tree.
+- runs from a copied run-scoped workspace
+- uses run-scoped local state under `.dress-runs/`
+- preserves parent `TF_VAR_*` inputs and overlays rehearsal-only values in the
+  child backend process
+- avoids mutating the source deployment directory
 
-Explicit deployment root override:
+That isolates run artifacts and backend state from the source working tree. It
+does not make fixed cloud resource names safe by itself. Modules still need
+explicit seams for:
+
+- skipping non-rehearsal-safe resources with `is_dress_rehearsal`
+- deriving rehearsal-safe names with `dress_run_id`
+
+`--disable-isolation` turns those protections off and runs against the working
+directory's configured backend state. Treat it as destructive.
+
+## Configuration
+
+Useful optional environment variables:
 
 ```bash
-export DRESS_DEPLOYMENT_ROOT=/path/to/deployment/root
-```
-
-Useful optional environment:
-
-```bash
+export DRESS_DEPLOYMENT_ROOT=/path/to/terraform/project/root
 export DRESS_RUNS_ROOT=/tmp/dress-runs
-export DRESS_WORKING_DIRECTORY=/path/to/deployment/root/env/dev
 export DRESS_TERRAFORM_BINARY=tofu
 ```
 
-The backend also injects `TF_VAR_dress_run_id` into Terraform/OpenTofu child
-processes during isolated rehearsal so modules can derive rehearsal-specific
-resource names without mutating the parent shell.
+During isolated runs, the backend injects these child-process variables for the
+module under test:
 
-## Module Naming Contract
+- `TF_VAR_is_dress_rehearsal=true` for explicit rehearsal-only conditionals
+- `TF_VAR_dress_run_id=<run-id>` when a module needs rehearsal-specific names
 
-For safe rehearsal coexistence, modules should use `TF_VAR_dress_run_id` to
-create unique resource names:
+This leaves the parent shell unchanged while giving HCL a small explicit
+contract for isolated runs.
 
-```hcl
-variable "dress_run_id" {
-  type        = string
-  default     = ""
-  description = "Rehearsal run identifier for resource name isolation"
-}
+## Artifacts and failure evidence
 
-locals {
-  name_suffix = var.dress_run_id != "" ? "-${var.dress_run_id}" : ""
-}
+Runs write their artifacts under:
 
-resource "google_storage_bucket" "data" {
-  name = "my-app-${var.environment}${local.name_suffix}"
-}
+```text
+<deployment-root>/.dress-runs/<run-id>/
 ```
 
-This ensures rehearsals create isolated resources while production deployments
-use standard names. See [docs/terraform-isolated-rehearsal.md](docs/terraform-isolated-rehearsal.md)
-for the full naming contract documentation.
+Useful paths after a failure:
 
-## Local Dev Workflow
+- `artifacts/run/rehearsal-summary.txt`
+- `artifacts/run/step-events.log`
+- `preserved/`
+
+The CLI prints the run directory, summary path, step log path, and preserved
+artifacts path at the end of each run.
+
+## Example project
+
+[`gcp-service-delivery-template`](https://github.com/pasunboneleve/gcp-service-delivery-template)
+is an infrastructure project written to use `dress-rehearsal` for validation.
+It is the right kind of repository to read when you want to see how a template
+can expose rehearsal-safe seams to `dress`.
+
+## Local development workflow
 
 For local sibling-template testing, keep machine-specific paths out of git and
 use an explicit sourced env file such as `.dress.local.env`, which is ignored by
@@ -172,32 +180,15 @@ Example local-only file contents:
 
 ```bash
 export DRESS_DEPLOYMENT_ROOT=../minimal-aws-github-ci-template/infra
-export DRESS_WORKING_DIRECTORY=../minimal-aws-github-ci-template/infra
 export DRESS_TERRAFORM_BINARY=tofu
 ```
 
-or:
+## More detail
 
-```bash
-export DRESS_DEPLOYMENT_ROOT=../minimal-gcp-github-ci-template/infra
-export DRESS_WORKING_DIRECTORY=../minimal-gcp-github-ci-template/infra
-export DRESS_TERRAFORM_BINARY=tofu
-```
-
-Use it explicitly:
-
-```bash
-source .dress.local.env
-dress
-```
-
-`dress` does not load that file automatically. The state remains explicit in
-the shell session that sourced it.
+- [Quickstart and operator reference](docs/quickstart.md)
+- [Architecture](docs/architecture.md)
+- [Backend extension guide](docs/backend-extension.md)
 
 ## License
 
 Released under the [MIT License](LICENSE).
-
-See [docs/architecture.md](/home/dmvianna/src/projects/dress-rehearsal/docs/architecture.md) for the initial shape.
-See [docs/phases.md](/home/dmvianna/src/projects/dress-rehearsal/docs/phases.md) for the ordered implementation plan.
-See [docs/terraform-isolated-rehearsal.md](/home/dmvianna/src/projects/dress-rehearsal/docs/terraform-isolated-rehearsal.md) for the isolated rehearsal design.

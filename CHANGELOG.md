@@ -17,6 +17,9 @@ All notable changes to `dress-rehearsal` will be recorded in this file.
     resources
   - `dress_run_id` for deriving rehearsal-safe resource names when resources
     should still be created during rehearsal
+- Rewrote the repository docs as a manual for the implemented tool, with a
+  user-facing README, operator quickstart, backend-extension guide, and archive
+  split between live documentation and historical design notes.
 
 ### Fixed
 - Isolated Terraform/OpenTofu runs now scrub ambient backend-shaping
